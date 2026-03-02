@@ -3,21 +3,9 @@ import {
   getReconnectSkipReason,
   isLifecycleSuperseded,
   nextLifecycleEpoch,
-  shouldHideConsoleWindow,
 } from '@electron/gateway/process-policy';
 
 describe('gateway process policy helpers', () => {
-  describe('shouldHideConsoleWindow', () => {
-    it('returns true on Windows', () => {
-      expect(shouldHideConsoleWindow('win32')).toBe(true);
-    });
-
-    it('returns false on non-Windows platforms', () => {
-      expect(shouldHideConsoleWindow('darwin')).toBe(false);
-      expect(shouldHideConsoleWindow('linux')).toBe(false);
-    });
-  });
-
   describe('lifecycle epoch helpers', () => {
     it('increments lifecycle epoch by one', () => {
       expect(nextLifecycleEpoch(0)).toBe(1);

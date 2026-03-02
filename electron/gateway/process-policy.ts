@@ -1,7 +1,3 @@
-export function shouldHideConsoleWindow(platform: NodeJS.Platform = process.platform): boolean {
-  return platform === 'win32';
-}
-
 export function nextLifecycleEpoch(currentEpoch: number): number {
   return currentEpoch + 1;
 }

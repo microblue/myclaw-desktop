@@ -39,7 +39,6 @@ import {
   getReconnectSkipReason,
   isLifecycleSuperseded,
   nextLifecycleEpoch,
-  shouldHideConsoleWindow,
 } from './process-policy';
 
 /**
@@ -709,7 +708,7 @@ export class GatewayManager extends EventEmitter {
 
         const { stdout } = await new Promise<{ stdout: string }>((resolve, reject) => {
           import('child_process').then(cp => {
-            cp.exec(cmd, { timeout: 5000, windowsHide: shouldHideConsoleWindow() }, (err, stdout) => {
+            cp.exec(cmd, { timeout: 5000, windowsHide: true }, (err, stdout) => {
               if (err) resolve({ stdout: '' });
               else resolve({ stdout });
             });
@@ -739,7 +738,7 @@ export class GatewayManager extends EventEmitter {
                     import('child_process').then(cp => {
                       cp.exec(
                         `taskkill /PID ${pid} /T /F`,
-                        { timeout: 5000, windowsHide: shouldHideConsoleWindow() },
+                        { timeout: 5000, windowsHide: true },
                         () => { }
                       );
                     }).catch(() => { });
@@ -844,7 +843,7 @@ export class GatewayManager extends EventEmitter {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: false,
         shell: false,
-        windowsHide: shouldHideConsoleWindow(),
+        windowsHide: true,
         env: spawnEnv,
       });
 
@@ -1098,7 +1097,7 @@ export class GatewayManager extends EventEmitter {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: false,
         shell: useShell,
-        windowsHide: shouldHideConsoleWindow(),
+        windowsHide: true,
         env: spawnEnv,
       });
       const child = this.process;
