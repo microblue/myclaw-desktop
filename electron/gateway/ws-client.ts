@@ -8,24 +8,51 @@ import {
 
 export async function probeGatewayReady(
   port: number,
-  timeoutMs = 2000,
+  timeoutMs = 1500,
 ): Promise<boolean> {
   return await new Promise<boolean>((resolve) => {
     const testWs = new WebSocket(`ws://localhost:${port}/ws`);
+    let settled = false;
+
+    const resolveOnce = (value: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      try {
+        testWs.close();
+      } catch {
+        // ignore
+      }
+      resolve(value);
+    };
+
     const timeout = setTimeout(() => {
-      testWs.close();
-      resolve(false);
+      resolveOnce(false);
     }, timeoutMs);
 
     testWs.on('open', () => {
-      clearTimeout(timeout);
-      testWs.close();
-      resolve(true);
+      // Do not resolve on plain socket open. The gateway can accept the TCP/WebSocket
+      // connection before it is ready to issue protocol challenges, which previously
+      // caused a false "ready" result and then a full connect() stall.
+    });
+
+    testWs.on('message', (data) => {
+      try {
+        const message = JSON.parse(data.toString()) as { type?: string; event?: string };
+        if (message.type === 'event' && message.event === 'connect.challenge') {
+          resolveOnce(true);
+        }
+      } catch {
+        // ignore malformed probe payloads
+      }
     });
 
     testWs.on('error', () => {
-      clearTimeout(timeout);
-      resolve(false);
+      resolveOnce(false);
+    });
+
+    testWs.on('close', () => {
+      resolveOnce(false);
     });
   });
 }

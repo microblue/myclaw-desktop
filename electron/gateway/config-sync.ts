@@ -6,6 +6,7 @@ import { getApiKey, getDefaultProvider, getProvider } from '../utils/secure-stor
 import { getProviderEnvVar, getKeyableProviderTypes } from '../utils/provider-registry';
 import { getOpenClawDir, getOpenClawEntryPath, isOpenClawPresent } from '../utils/paths';
 import { getUvMirrorEnv } from '../utils/uv-env';
+import { listConfiguredChannels } from '../utils/channel-config';
 import { syncGatewayTokenToConfig, syncBrowserConfigToOpenClaw, sanitizeOpenClawConfig } from '../utils/openclaw-auth';
 import { buildProxyEnv, resolveProxySettings } from '../utils/proxy';
 import { syncProxyConfigToOpenClaw } from '../utils/openclaw-proxy';
@@ -21,6 +22,7 @@ export interface GatewayLaunchContext {
   binPathExists: boolean;
   loadedProviderKeyCount: number;
   proxySummary: string;
+  channelStartupSummary: string;
 }
 
 export async function syncGatewayConfigBeforeLaunch(
@@ -88,6 +90,32 @@ async function loadProviderEnv(): Promise<{ providerEnv: Record<string, string>;
   return { providerEnv, loadedProviderKeyCount };
 }
 
+async function resolveChannelStartupPolicy(): Promise<{
+  skipChannels: boolean;
+  channelStartupSummary: string;
+}> {
+  try {
+    const configuredChannels = await listConfiguredChannels();
+    if (configuredChannels.length === 0) {
+      return {
+        skipChannels: true,
+        channelStartupSummary: 'skipped(no configured channels)',
+      };
+    }
+
+    return {
+      skipChannels: false,
+      channelStartupSummary: `enabled(${configuredChannels.join(',')})`,
+    };
+  } catch (error) {
+    logger.warn('Failed to determine configured channels for gateway launch:', error);
+    return {
+      skipChannels: false,
+      channelStartupSummary: 'enabled(unknown)',
+    };
+  }
+}
+
 export async function prepareGatewayLaunchContext(port: number): Promise<GatewayLaunchContext> {
   const openclawDir = getOpenClawDir();
   const entryScript = getOpenClawEntryPath();
@@ -118,6 +146,7 @@ export async function prepareGatewayLaunchContext(port: number): Promise<Gateway
     : process.env.PATH || '';
 
   const { providerEnv, loadedProviderKeyCount } = await loadProviderEnv();
+  const { skipChannels, channelStartupSummary } = await resolveChannelStartupPolicy();
   const uvEnv = await getUvMirrorEnv();
   const proxyEnv = buildProxyEnv(appSettings);
   const resolvedProxy = resolveProxySettings(appSettings);
@@ -133,8 +162,8 @@ export async function prepareGatewayLaunchContext(port: number): Promise<Gateway
     ...uvEnv,
     ...proxyEnv,
     OPENCLAW_GATEWAY_TOKEN: appSettings.gatewayToken,
-    OPENCLAW_SKIP_CHANNELS: '',
-    CLAWDBOT_SKIP_CHANNELS: '',
+    OPENCLAW_SKIP_CHANNELS: skipChannels ? '1' : '',
+    CLAWDBOT_SKIP_CHANNELS: skipChannels ? '1' : '',
     OPENCLAW_NO_RESPAWN: '1',
   };
 
@@ -148,5 +177,6 @@ export async function prepareGatewayLaunchContext(port: number): Promise<Gateway
     binPathExists,
     loadedProviderKeyCount,
     proxySummary,
+    channelStartupSummary,
   };
 }

@@ -9,22 +9,22 @@ import { existsSync, writeFileSync } from 'fs';
 import WebSocket from 'ws';
 import { PORTS } from '../utils/config';
 import {
-  getOpenClawDir,
-  getOpenClawEntryPath,
   appendNodeRequireToNodeOptions,
 } from '../utils/paths';
 import { getSetting } from '../utils/store';
 import { JsonRpcNotification, isNotification, isResponse } from './protocol';
 import { logger } from '../utils/logger';
-import { isPythonReady, setupManagedPython } from '../utils/uv-setup';
 import {
   loadOrCreateDeviceIdentity,
   type DeviceIdentity,
 } from '../utils/device-identity';
 import { shouldAttemptConfigAutoRepair } from './startup-recovery';
 import {
+  DEFAULT_RECONNECT_CONFIG,
+  type ReconnectConfig,
   type GatewayLifecycleState,
   getDeferredRestartAction,
+  getReconnectScheduleDecision,
   getReconnectSkipReason,
   isLifecycleSuperseded,
   nextLifecycleEpoch,
@@ -40,6 +40,16 @@ import { dispatchJsonRpcNotification, dispatchProtocolEvent } from './event-disp
 import { GatewayStateController } from './state';
 import { prepareGatewayLaunchContext } from './config-sync';
 import { buildGatewayConnectFrame, probeGatewayReady } from './ws-client';
+import {
+  findExistingGatewayProcess,
+  isTransientGatewayStartError,
+  runOpenClawDoctorRepair,
+  terminateOwnedGatewayProcess,
+  unloadLaunchctlGatewayService,
+  waitForPortFree,
+  warmupManagedPythonReadiness,
+} from './supervisor';
+import { classifyGatewayStderrMessage, recordGatewayStartupStderrLine } from './startup-stderr';
 
 /**
  * Gateway connection status
@@ -67,21 +77,6 @@ export interface GatewayManagerEvents {
   'channel:status': (data: { channelId: string; status: string }) => void;
   'chat:message': (data: { message: unknown }) => void;
 }
-
-/**
- * Reconnection configuration
- */
-interface ReconnectConfig {
-  maxAttempts: number;
-  baseDelay: number;
-  maxDelay: number;
-}
-
-const DEFAULT_RECONNECT_CONFIG: ReconnectConfig = {
-  maxAttempts: 10,
-  baseDelay: 1000,
-  maxDelay: 30000,
-};
 
 // getNodeExecutablePath() removed: utilityProcess.fork() handles process isolation
 // natively on all platforms (no dock icon on macOS, no console on Windows).
@@ -257,40 +252,6 @@ export class GatewayManager extends EventEmitter {
     return sanitized;
   }
 
-  private formatExit(code: number | null, signal: NodeJS.Signals | null): string {
-    if (code !== null) return `code=${code}`;
-    if (signal) return `signal=${signal}`;
-    return 'code=null signal=null';
-  }
-
-  private classifyStderrMessage(message: string): { level: 'drop' | 'debug' | 'warn'; normalized: string } {
-    const msg = message.trim();
-    if (!msg) return { level: 'drop', normalized: msg };
-
-    // Known noisy lines that are not actionable for Gateway lifecycle debugging.
-    if (msg.includes('openclaw-control-ui') && msg.includes('token_mismatch')) return { level: 'drop', normalized: msg };
-    if (msg.includes('closed before connect') && msg.includes('token mismatch')) return { level: 'drop', normalized: msg };
-
-    // Downgrade frequent non-fatal noise.
-    if (msg.includes('ExperimentalWarning')) return { level: 'debug', normalized: msg };
-    if (msg.includes('DeprecationWarning')) return { level: 'debug', normalized: msg };
-    if (msg.includes('Debugger attached')) return { level: 'debug', normalized: msg };
-    // Electron restricts NODE_OPTIONS in packaged apps; this is expected and harmless.
-    if (msg.includes('NODE_OPTIONs are not supported in packaged apps')) return { level: 'debug', normalized: msg };
-
-    return { level: 'warn', normalized: msg };
-  }
-
-  private recordStartupStderrLine(line: string): void {
-    const normalized = line.trim();
-    if (!normalized) return;
-    this.recentStartupStderrLines.push(normalized);
-    const MAX_STDERR_LINES = 120;
-    if (this.recentStartupStderrLines.length > MAX_STDERR_LINES) {
-      this.recentStartupStderrLines.splice(0, this.recentStartupStderrLines.length - MAX_STDERR_LINES);
-    }
-  }
-
   private bumpLifecycleEpoch(reason: string): number {
     this.lifecycleEpoch = nextLifecycleEpoch(this.lifecycleEpoch);
     logger.debug(`Gateway lifecycle epoch advanced to ${this.lifecycleEpoch} (${reason})`);
@@ -406,16 +367,7 @@ export class GatewayManager extends EventEmitter {
 
     // Check if Python environment is ready (self-healing) asynchronously.
     // Fire-and-forget: only needs to run once, not on every retry.
-    void isPythonReady().then(pythonReady => {
-      if (!pythonReady) {
-        logger.info('Python environment missing or incomplete, attempting background repair...');
-        void setupManagedPython().catch(err => {
-          logger.error('Background Python repair failed:', err);
-        });
-      }
-    }).catch(err => {
-      logger.error('Failed to check Python environment:', err);
-    });
+    warmupManagedPythonReadiness();
 
     try {
       let startAttempts = 0;
@@ -428,7 +380,10 @@ export class GatewayManager extends EventEmitter {
         try {
           // Check if Gateway is already running
           logger.debug('Checking for existing Gateway...');
-          const existing = await this.findExistingGateway();
+          const existing = await findExistingGatewayProcess({
+            port: this.status.port,
+            ownedPid: this.process?.pid,
+          });
           this.assertLifecycleEpoch(startEpoch, 'start/find-existing');
           if (existing) {
             logger.debug(`Found existing Gateway on port ${existing.port}`);
@@ -446,7 +401,7 @@ export class GatewayManager extends EventEmitter {
           // after the previous Gateway process exits, preventing the new one
           // from binding. Wait for the port to be free before proceeding.
           if (process.platform === 'win32') {
-            await this.waitForPortFree(this.status.port);
+            await waitForPortFree(this.status.port);
             this.assertLifecycleEpoch(startEpoch, 'start/wait-port');
           }
 
@@ -475,7 +430,7 @@ export class GatewayManager extends EventEmitter {
             logger.warn(
               'Detected invalid OpenClaw config during Gateway startup; running doctor repair before retry'
             );
-            const repaired = await this.runOpenClawDoctorRepair();
+            const repaired = await runOpenClawDoctorRepair();
             if (repaired) {
               logger.info('OpenClaw doctor repair completed; retrying Gateway startup');
               this.setStatus({ state: 'starting', error: undefined, reconnectAttempts: 0 });
@@ -486,12 +441,7 @@ export class GatewayManager extends EventEmitter {
 
           // Retry on transient connect errors
           const errMsg = String(error);
-          const isTransientError =
-            errMsg.includes('WebSocket closed before handshake') ||
-            errMsg.includes('ECONNREFUSED') ||
-            errMsg.includes('Gateway process exited before becoming ready') ||
-            errMsg.includes('Timed out waiting for connect.challenge') ||
-            errMsg.includes('Connect handshake timeout');
+          const isTransientError = isTransientGatewayStartError(error);
 
           if (startAttempts < MAX_START_ATTEMPTS && isTransientError) {
             logger.warn(`Transient start error: ${errMsg}. Retrying... (${startAttempts}/${MAX_START_ATTEMPTS})`);
@@ -551,34 +501,7 @@ export class GatewayManager extends EventEmitter {
     // Kill process
     if (this.process && this.ownsProcess) {
       const child = this.process;
-      // UtilityProcess doesn't expose exitCode/signalCode — track exit via event.
-      let exited = false;
-
-      await new Promise<void>((resolve) => {
-        child.once('exit', () => {
-          exited = true;
-          resolve();
-        });
-
-        const pid = child.pid;
-        logger.info(`Sending kill to Gateway process (pid=${pid ?? 'unknown'})`);
-        try { child.kill(); } catch { /* ignore if already exited */ }
-
-        // Force kill after timeout via OS-level kill on the PID
-        const timeout = setTimeout(() => {
-          if (!exited) {
-            logger.warn(`Gateway did not exit in time, force-killing (pid=${pid ?? 'unknown'})`);
-            if (pid) {
-              try { process.kill(pid, 'SIGKILL'); } catch { /* ignore */ }
-            }
-          }
-          resolve();
-        }, 5000);
-
-        child.once('exit', () => {
-          clearTimeout(timeout);
-        });
-      });
+      await terminateOwnedGatewayProcess(child);
 
       if (this.process === child) {
         this.process = null;
@@ -748,321 +671,12 @@ export class GatewayManager extends EventEmitter {
   }
 
   /**
-   * Unload the system-managed openclaw gateway launchctl service if it is
-   * loaded.  Without this, killing the process only causes launchctl to
-   * respawn it, leading to an infinite reconnect loop.
-   */
-  private async unloadLaunchctlService(): Promise<void> {
-    if (process.platform !== 'darwin') return;
-
-    try {
-      const uid = process.getuid?.();
-      if (uid === undefined) return;
-
-      const LAUNCHD_LABEL = 'ai.openclaw.gateway';
-      const serviceTarget = `gui/${uid}/${LAUNCHD_LABEL}`;
-
-      const loaded = await new Promise<boolean>((resolve) => {
-        import('child_process').then(cp => {
-          cp.exec(`launchctl print ${serviceTarget}`, { timeout: 5000 }, (err) => {
-            resolve(!err);
-          });
-        }).catch(() => resolve(false));
-      });
-
-      if (!loaded) return;
-
-      logger.info(`Unloading launchctl service ${serviceTarget} to prevent auto-respawn`);
-      await new Promise<void>((resolve) => {
-        import('child_process').then(cp => {
-          cp.exec(`launchctl bootout ${serviceTarget}`, { timeout: 10000 }, (err) => {
-            if (err) {
-              logger.warn(`Failed to bootout launchctl service: ${err.message}`);
-            } else {
-              logger.info('Successfully unloaded launchctl gateway service');
-            }
-            resolve();
-          });
-        }).catch(() => resolve());
-      });
-
-      await new Promise(r => setTimeout(r, 2000));
-
-      // Remove the plist so the service won't reload on next login.
-      try {
-        const { homedir } = await import('os');
-        const plistPath = path.join(homedir(), 'Library', 'LaunchAgents', `${LAUNCHD_LABEL}.plist`);
-        const { access, unlink } = await import('fs/promises');
-        await access(plistPath);
-        await unlink(plistPath);
-        logger.info(`Removed legacy launchd plist to prevent reload on next login: ${plistPath}`);
-      } catch {
-        // File doesn't exist or can't be removed -- not fatal
-      }
-    } catch (err) {
-      logger.warn('Error while unloading launchctl gateway service:', err);
-    }
-  }
-
-  /**
-   * Find existing Gateway process by attempting a WebSocket connection
-   */
-  private async findExistingGateway(): Promise<{ port: number, externalToken?: string } | null> {
-    try {
-      const port = PORTS.OPENCLAW_GATEWAY;
-
-      try {
-        // Platform-specific command to find processes listening on the gateway port.
-        // We use native commands (netstat on Windows) to avoid triggering AV blocks
-        // that flag "powershell -WindowStyle Hidden" as malware behavior.
-        // windowsHide: true in cp.exec natively prevents the black command window.
-        const cmd = process.platform === 'win32'
-          ? `netstat -ano | findstr :${port}`
-          : `lsof -i :${port} -sTCP:LISTEN -t`;
-
-        const { stdout } = await new Promise<{ stdout: string }>((resolve, reject) => {
-          import('child_process').then(cp => {
-            cp.exec(cmd, { timeout: 5000, windowsHide: true }, (err, stdout) => {
-              if (err) resolve({ stdout: '' });
-              else resolve({ stdout });
-            });
-          }).catch(reject);
-        });
-
-        if (stdout.trim()) {
-          // Parse netstat or lsof output to extract PIDs
-          let pids: string[] = [];
-          if (process.platform === 'win32') {
-            // netstat -ano output format:
-            //   TCP    127.0.0.1:3000     0.0.0.0:0              LISTENING       12345
-            const lines = stdout.trim().split(/\r?\n/);
-            for (const line of lines) {
-              const parts = line.trim().split(/\s+/);
-              if (parts.length >= 5 && parts[3] === 'LISTENING') {
-                pids.push(parts[4]);
-              }
-            }
-          } else {
-            pids = stdout.trim().split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-          }
-          // Remove duplicate PIDs
-          pids = [...new Set(pids)];
-
-          if (pids.length > 0) {
-            if (!this.process || !pids.includes(String(this.process.pid))) {
-              logger.info(`Found orphaned process listening on port ${port} (PIDs: ${pids.join(', ')}), attempting to kill...`);
-
-              // Unload the launchctl service first so macOS doesn't auto-
-              // respawn the process we're about to kill.
-              if (process.platform === 'darwin') {
-                await this.unloadLaunchctlService();
-              }
-
-              // Terminate orphaned processes
-              for (const pid of pids) {
-                try {
-                  if (process.platform === 'win32') {
-                    // Use taskkill with windowsHide: true. This natively hides the console
-                    // flash without needing PowerShell, avoiding AV alerts.
-                    import('child_process').then(cp => {
-                      cp.exec(
-                        `taskkill /F /PID ${pid} /T`,
-                        { timeout: 5000, windowsHide: true },
-                        () => { }
-                      );
-                    }).catch(() => { });
-                  } else {
-                    // SIGTERM first so the gateway can clean up its lock file.
-                    process.kill(parseInt(pid), 'SIGTERM');
-                  }
-                } catch { /* ignore */ }
-              }
-              await new Promise(r => setTimeout(r, process.platform === 'win32' ? 2000 : 3000));
-
-              // SIGKILL any survivors (Unix only — Windows taskkill /F is already forceful)
-              if (process.platform !== 'win32') {
-                for (const pid of pids) {
-                  try { process.kill(parseInt(pid), 0); process.kill(parseInt(pid), 'SIGKILL'); } catch { /* already exited */ }
-                }
-                await new Promise(r => setTimeout(r, 1000));
-              }
-              return null;
-            }
-          }
-        }
-      } catch (err) {
-        logger.warn('Error checking for existing process on port:', err);
-      }
-
-      // Try a quick WebSocket connection to check if gateway is listening
-      return await new Promise<{ port: number, externalToken?: string } | null>((resolve) => {
-        const testWs = new WebSocket(`ws://localhost:${port}/ws`);
-        const timeout = setTimeout(() => {
-          testWs.close();
-          resolve(null);
-        }, 2000);
-
-        testWs.on('open', () => {
-          clearTimeout(timeout);
-          testWs.close();
-          resolve({ port });
-        });
-
-        testWs.on('error', () => {
-          clearTimeout(timeout);
-          resolve(null);
-        });
-      });
-    } catch {
-      // Gateway not running
-    }
-
-    return null;
-  }
-
-  /**
-   * Attempt to repair invalid OpenClaw config using the built-in doctor command.
-   * Returns true when doctor exits successfully.
-   */
-  private async runOpenClawDoctorRepair(): Promise<boolean> {
-    const openclawDir = getOpenClawDir();
-    const entryScript = getOpenClawEntryPath();
-    if (!existsSync(entryScript)) {
-      logger.error(`Cannot run OpenClaw doctor repair: entry script not found at ${entryScript}`);
-      return false;
-    }
-
-    const platform = process.platform;
-    const arch = process.arch;
-    const target = `${platform}-${arch}`;
-    const binPath = app.isPackaged
-      ? path.join(process.resourcesPath, 'bin')
-      : path.join(process.cwd(), 'resources', 'bin', target);
-    const binPathExists = existsSync(binPath);
-    const finalPath = binPathExists
-      ? `${binPath}${path.delimiter}${process.env.PATH || ''}`
-      : process.env.PATH || '';
-
-    const uvEnv = await getUvMirrorEnv();
-    const doctorArgs = ['doctor', '--fix', '--yes', '--non-interactive'];
-    logger.info(
-      `Running OpenClaw doctor repair (entry="${entryScript}", args="${doctorArgs.join(' ')}", cwd="${openclawDir}", bundledBin=${binPathExists ? 'yes' : 'no'})`
-    );
-
-    return new Promise<boolean>((resolve) => {
-      const forkEnv: Record<string, string | undefined> = {
-        ...process.env,
-        PATH: finalPath,
-        ...uvEnv,
-        OPENCLAW_NO_RESPAWN: '1',
-      };
-
-      const child = utilityProcess.fork(entryScript, doctorArgs, {
-        cwd: openclawDir,
-        stdio: 'pipe',
-        env: forkEnv as NodeJS.ProcessEnv,
-      });
-
-      let settled = false;
-      const finish = (ok: boolean) => {
-        if (settled) return;
-        settled = true;
-        resolve(ok);
-      };
-
-      const timeout = setTimeout(() => {
-        logger.error('OpenClaw doctor repair timed out after 120000ms');
-        try {
-          child.kill();
-        } catch {
-          // ignore
-        }
-        finish(false);
-      }, 120000);
-
-      child.on('error', (err) => {
-        clearTimeout(timeout);
-        logger.error('Failed to spawn OpenClaw doctor repair process:', err);
-        finish(false);
-      });
-
-      child.stdout?.on('data', (data) => {
-        const raw = data.toString();
-        for (const line of raw.split(/\r?\n/)) {
-          const normalized = line.trim();
-          if (!normalized) continue;
-          logger.debug(`[Gateway doctor stdout] ${normalized}`);
-        }
-      });
-
-      child.stderr?.on('data', (data) => {
-        const raw = data.toString();
-        for (const line of raw.split(/\r?\n/)) {
-          const normalized = line.trim();
-          if (!normalized) continue;
-          logger.warn(`[Gateway doctor stderr] ${normalized}`);
-        }
-      });
-
-      child.on('exit', (code: number) => {
-        clearTimeout(timeout);
-        if (code === 0) {
-          logger.info('OpenClaw doctor repair completed successfully');
-          finish(true);
-          return;
-        }
-        logger.warn(`OpenClaw doctor repair exited (code=${code})`);
-        finish(false);
-      });
-    });
-  }
-
-  /**
    * Start Gateway process
    * Uses OpenClaw npm package from node_modules (dev) or resources (production)
    */
-  /**
-   * Wait until the gateway port is no longer held by the OS.
-   * On Windows, TCP TIME_WAIT can keep a port occupied for up to 2 minutes
-   * after the owning process exits, causing the new Gateway to hang on bind.
-   */
-  private async waitForPortFree(port: number, timeoutMs = 30000): Promise<void> {
-    const net = await import('net');
-    const start = Date.now();
-    const pollInterval = 500;
-    let logged = false;
-
-    while (Date.now() - start < timeoutMs) {
-      const available = await new Promise<boolean>((resolve) => {
-        const server = net.createServer();
-        server.once('error', () => resolve(false));
-        server.once('listening', () => {
-          server.close(() => resolve(true));
-        });
-        server.listen(port, '127.0.0.1');
-      });
-
-      if (available) {
-        const elapsed = Date.now() - start;
-        if (elapsed > pollInterval) {
-          logger.info(`Port ${port} became available after ${elapsed}ms`);
-        }
-        return;
-      }
-
-      if (!logged) {
-        logger.info(`Waiting for port ${port} to become available (Windows TCP TIME_WAIT)...`);
-        logged = true;
-      }
-      await new Promise(r => setTimeout(r, pollInterval));
-    }
-
-    logger.warn(`Port ${port} still occupied after ${timeoutMs}ms, proceeding anyway`);
-  }
-
   private async startProcess(): Promise<void> {
     // Ensure no system-managed gateway service will compete with our process.
-    await this.unloadLaunchctlService();
+    await unloadLaunchctlGatewayService();
     const launchContext = await prepareGatewayLaunchContext(this.status.port);
     const {
       openclawDir,
@@ -1073,10 +687,11 @@ export class GatewayManager extends EventEmitter {
       binPathExists,
       loadedProviderKeyCount,
       proxySummary,
+      channelStartupSummary,
     } = launchContext;
 
     logger.info(
-      `Starting Gateway process (mode=${mode}, port=${this.status.port}, entry="${entryScript}", args="${this.sanitizeSpawnArgs(gatewayArgs).join(' ')}", cwd="${openclawDir}", bundledBin=${binPathExists ? 'yes' : 'no'}, providerKeys=${loadedProviderKeyCount}, proxy=${proxySummary})`
+      `Starting Gateway process (mode=${mode}, port=${this.status.port}, entry="${entryScript}", args="${this.sanitizeSpawnArgs(gatewayArgs).join(' ')}", cwd="${openclawDir}", bundledBin=${binPathExists ? 'yes' : 'no'}, providerKeys=${loadedProviderKeyCount}, channels=${channelStartupSummary}, proxy=${proxySummary})`
     );
     this.lastSpawnSummary = `mode=${mode}, entry="${entryScript}", args="${this.sanitizeSpawnArgs(gatewayArgs).join(' ')}", cwd="${openclawDir}"`;
 
@@ -1144,8 +759,8 @@ export class GatewayManager extends EventEmitter {
       child.stderr?.on('data', (data) => {
         const raw = data.toString();
         for (const line of raw.split(/\r?\n/)) {
-          this.recordStartupStderrLine(line);
-          const classified = this.classifyStderrMessage(line);
+          recordGatewayStartupStderrLine(this.recentStartupStderrLines, line);
+          const classified = classifyGatewayStderrMessage(line);
           if (classified.level === 'drop') continue;
           if (classified.level === 'debug') {
             logger.debug(`[Gateway stderr] ${classified.normalized}`);
@@ -1168,9 +783,9 @@ export class GatewayManager extends EventEmitter {
   }
 
   /**
-   * Wait for Gateway to be ready by checking if the port is accepting connections
+   * Wait for Gateway to be ready by checking if it can issue connect challenges.
    */
-  private async waitForReady(retries = 2400, interval = 250): Promise<void> {
+  private async waitForReady(retries = 2400, interval = 200): Promise<void> {
     const child = this.process;
     for (let i = 0; i < retries; i++) {
       // Early exit if the gateway process has already exited.
@@ -1182,7 +797,7 @@ export class GatewayManager extends EventEmitter {
       }
 
       try {
-        const ready = await probeGatewayReady(this.status.port, 2000);
+        const ready = await probeGatewayReady(this.status.port, 1500);
 
         if (ready) {
           logger.debug(`Gateway ready after ${i + 1} attempt(s)`);
@@ -1447,17 +1062,26 @@ export class GatewayManager extends EventEmitter {
    * Schedule reconnection attempt with exponential backoff
    */
   private scheduleReconnect(): void {
-    if (!this.shouldReconnect) {
-      logger.debug('Gateway reconnect skipped (auto-reconnect disabled)');
+    const decision = getReconnectScheduleDecision({
+      shouldReconnect: this.shouldReconnect,
+      hasReconnectTimer: this.reconnectTimer !== null,
+      reconnectAttempts: this.reconnectAttempts,
+      maxAttempts: this.reconnectConfig.maxAttempts,
+      baseDelay: this.reconnectConfig.baseDelay,
+      maxDelay: this.reconnectConfig.maxDelay,
+    });
+
+    if (decision.action === 'skip') {
+      logger.debug(`Gateway reconnect skipped (${decision.reason})`);
       return;
     }
 
-    if (this.reconnectTimer) {
+    if (decision.action === 'already-scheduled') {
       return;
     }
 
-    if (this.reconnectAttempts >= this.reconnectConfig.maxAttempts) {
-      logger.error(`Gateway reconnect failed: max attempts reached (${this.reconnectConfig.maxAttempts})`);
+    if (decision.action === 'fail') {
+      logger.error(`Gateway reconnect failed: max attempts reached (${decision.maxAttempts})`);
       this.setStatus({
         state: 'error',
         error: 'Failed to reconnect after maximum attempts',
@@ -1466,14 +1090,9 @@ export class GatewayManager extends EventEmitter {
       return;
     }
 
-    // Calculate delay with exponential backoff
-    const delay = Math.min(
-      this.reconnectConfig.baseDelay * Math.pow(2, this.reconnectAttempts),
-      this.reconnectConfig.maxDelay
-    );
-
-    this.reconnectAttempts++;
-    logger.warn(`Scheduling Gateway reconnect attempt ${this.reconnectAttempts}/${this.reconnectConfig.maxAttempts} in ${delay}ms`);
+    const { delay, nextAttempt, maxAttempts } = decision;
+    this.reconnectAttempts = nextAttempt;
+    logger.warn(`Scheduling Gateway reconnect attempt ${nextAttempt}/${maxAttempts} in ${delay}ms`);
 
     this.setStatus({
       state: 'reconnecting',

@@ -17,6 +17,9 @@ export async function handleAppRoutes(
     });
     res.write(': connected\n\n');
     ctx.eventBus.addSseClient(res);
+    // Send a current-state snapshot immediately so renderer subscribers do not
+    // miss lifecycle transitions that happened before the SSE connection opened.
+    res.write(`event: gateway:status\ndata: ${JSON.stringify(ctx.gatewayManager.getStatus())}\n\n`);
     return true;
   }
 

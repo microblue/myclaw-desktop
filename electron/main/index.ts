@@ -230,40 +230,8 @@ async function initialize(): Promise<void> {
     logger.warn('Failed to install built-in skills:', error);
   });
 
-  // Start Gateway automatically (this seeds missing bootstrap files with full templates)
-  const gatewayAutoStart = await getSetting('gatewayAutoStart');
-  if (gatewayAutoStart) {
-    try {
-      logger.debug('Auto-starting Gateway...');
-      await gatewayManager.start();
-      logger.info('Gateway auto-start succeeded');
-    } catch (error) {
-      logger.error('Gateway auto-start failed:', error);
-      mainWindow?.webContents.send('gateway:error', String(error));
-    }
-  } else {
-    logger.info('Gateway auto-start disabled in settings');
-  }
-
-  // Merge ClawX context snippets into the workspace bootstrap files.
-  // The gateway seeds workspace files asynchronously after its HTTP server
-  // is ready, so ensureClawXContext will retry until the target files appear.
-  void ensureClawXContext().catch((error) => {
-    logger.warn('Failed to merge ClawX context into workspace:', error);
-  });
-
-  // Auto-install openclaw CLI and shell completions (non-blocking).
-  void autoInstallCliIfNeeded((installedPath) => {
-    mainWindow?.webContents.send('openclaw:cli-installed', installedPath);
-  }).then(() => {
-    generateCompletionCache();
-    installCompletionToProfile();
-  }).catch((error) => {
-    logger.warn('CLI auto-install failed:', error);
-  });
-
-  // Re-apply ClawX context after every gateway restart because the gateway
-  // may re-seed workspace files with clean templates (losing ClawX markers).
+  // Bridge gateway and host-side events before any auto-start logic runs, so
+  // renderer subscribers observe the full startup lifecycle.
   gatewayManager.on('status', (status: { state: string }) => {
     hostEventBus.emit('gateway:status', status);
     if (status.state === 'running') {
@@ -319,6 +287,38 @@ async function initialize(): Promise<void> {
 
   whatsAppLoginManager.on('error', (error) => {
     hostEventBus.emit('channel:whatsapp-error', error);
+  });
+
+  // Start Gateway automatically (this seeds missing bootstrap files with full templates)
+  const gatewayAutoStart = await getSetting('gatewayAutoStart');
+  if (gatewayAutoStart) {
+    try {
+      logger.debug('Auto-starting Gateway...');
+      await gatewayManager.start();
+      logger.info('Gateway auto-start succeeded');
+    } catch (error) {
+      logger.error('Gateway auto-start failed:', error);
+      mainWindow?.webContents.send('gateway:error', String(error));
+    }
+  } else {
+    logger.info('Gateway auto-start disabled in settings');
+  }
+
+  // Merge ClawX context snippets into the workspace bootstrap files.
+  // The gateway seeds workspace files asynchronously after its HTTP server
+  // is ready, so ensureClawXContext will retry until the target files appear.
+  void ensureClawXContext().catch((error) => {
+    logger.warn('Failed to merge ClawX context into workspace:', error);
+  });
+
+  // Auto-install openclaw CLI and shell completions (non-blocking).
+  void autoInstallCliIfNeeded((installedPath) => {
+    mainWindow?.webContents.send('openclaw:cli-installed', installedPath);
+  }).then(() => {
+    generateCompletionCache();
+    installCompletionToProfile();
+  }).catch((error) => {
+    logger.warn('CLI auto-install failed:', error);
   });
 }
 
