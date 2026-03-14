@@ -19,6 +19,7 @@ import {
   saveProviderKeyToOpenClaw,
   removeProviderFromOpenClaw,
 } from '../utils/openclaw-auth';
+import { buildOpenClawControlUiUrl } from '../utils/openclaw-control-ui';
 import { logger } from '../utils/logger';
 import {
   saveChannelConfig,
@@ -1283,8 +1284,7 @@ function registerGatewayHandlers(
       const status = gatewayManager.getStatus();
       const token = await getSetting('gatewayToken');
       const port = status.port || 18789;
-      // Pass token as query param - Control UI will store it in localStorage
-      const url = `http://127.0.0.1:${port}/?token=${encodeURIComponent(token)}`;
+      const url = buildOpenClawControlUiUrl(port, token);
       return { success: true, url, port, token };
     } catch (error) {
       return { success: false, error: String(error) };
