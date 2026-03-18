@@ -32,6 +32,7 @@ import {
   markQuitCleanupCompleted,
   requestQuitLifecycleAction,
 } from './quit-lifecycle';
+import { acquireProcessInstanceFileLock } from './process-instance-lock';
 import { getSetting } from '../utils/store';
 import { ensureBuiltinSkillsInstalled, ensurePreinstalledSkillsInstalled } from '../utils/skill-config';
 import { ensureAllBundledPluginsInstalled } from '../utils/plugin-install';
@@ -73,11 +74,32 @@ if (process.platform === 'linux') {
 // same port, then each treats the other's gateway as "orphaned" and kills
 // it — creating an infinite kill/restart loop on Windows.
 // The losing process must exit immediately so it never reaches Gateway startup.
-const gotTheLock = app.requestSingleInstanceLock();
-if (!gotTheLock) {
+const gotElectronLock = app.requestSingleInstanceLock();
+if (!gotElectronLock) {
   console.info('[ClawX] Another instance already holds the single-instance lock; exiting duplicate process');
   app.exit(0);
 }
+let releaseProcessInstanceFileLock: () => void = () => {};
+let gotFileLock = true;
+if (gotElectronLock) {
+  try {
+    const fileLock = acquireProcessInstanceFileLock({
+      userDataDir: app.getPath('userData'),
+      lockName: 'clawx',
+    });
+    gotFileLock = fileLock.acquired;
+    releaseProcessInstanceFileLock = fileLock.release;
+    if (!fileLock.acquired) {
+      console.info(
+        `[ClawX] Another instance already holds process lock (${fileLock.lockPath}${fileLock.ownerPid ? `, pid=${fileLock.ownerPid}` : ''}); exiting duplicate process`,
+      );
+      app.exit(0);
+    }
+  } catch (error) {
+    console.warn('[ClawX] Failed to acquire process instance file lock; continuing with Electron single-instance lock only', error);
+  }
+}
+const gotTheLock = gotElectronLock && gotFileLock;
 
 // Global references
 let mainWindow: BrowserWindow | null = null;
@@ -420,6 +442,14 @@ async function initialize(): Promise<void> {
 }
 
 if (gotTheLock) {
+  process.on('exit', () => {
+    releaseProcessInstanceFileLock();
+  });
+
+  app.on('will-quit', () => {
+    releaseProcessInstanceFileLock();
+  });
+
   if (process.platform === 'win32') {
     app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
   }
