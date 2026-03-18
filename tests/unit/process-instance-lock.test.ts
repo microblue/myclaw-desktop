@@ -77,4 +77,20 @@ describe('process instance file lock', () => {
     expect(readFileSync(lockPath, 'utf8')).toBe('5555');
     lock.release();
   });
+
+  it('replaces malformed lock file content', () => {
+    const userDataDir = createTempDir();
+    const lockPath = join(userDataDir, 'clawx.instance.lock');
+    writeFileSync(lockPath, 'not-a-pid', 'utf8');
+
+    const lock = acquireProcessInstanceFileLock({
+      userDataDir,
+      lockName: 'clawx',
+      pid: 6666,
+    });
+
+    expect(lock.acquired).toBe(true);
+    expect(readFileSync(lockPath, 'utf8')).toBe('6666');
+    lock.release();
+  });
 });

@@ -76,7 +76,9 @@ export function acquireProcessInstanceFileLock(
       }
 
       ownerPid = readLockOwnerPid(lockPath);
-      if (ownerPid && !isPidAlive(ownerPid) && existsSync(lockPath)) {
+      const shouldTreatAsStale =
+        ownerPid === undefined || !isPidAlive(ownerPid);
+      if (shouldTreatAsStale && existsSync(lockPath)) {
         try {
           rmSync(lockPath, { force: true });
           continue;
