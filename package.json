@@ -1,6 +1,6 @@
 {
     "name": "clawx",
-    "version": "0.2.9",
+    "version": "0.3.0-alpha.0",
     "pnpm": {
         "onlyBuiltDependencies": [
             "@discordjs/opus",
@@ -17,8 +17,13 @@
             "https-proxy-agent": "7.0.6"
         },
         "supportedArchitectures": {
-            "os": ["current"],
-            "cpu": ["x64", "arm64"]
+            "os": [
+                "current"
+            ],
+            "cpu": [
+                "x64",
+                "arm64"
+            ]
         }
     },
     "description": "ClawX - Graphical AI Assistant based on OpenClaw",
