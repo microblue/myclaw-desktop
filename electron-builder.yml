@@ -84,6 +84,7 @@ mac:
   gatekeeperAssess: false
   entitlements: entitlements.mac.plist
   entitlementsInherit: entitlements.mac.plist
+  sign: false
   notarize: false
   extendInfo:
     NSMicrophoneUsageDescription: MyClaw requires microphone access for voice features
