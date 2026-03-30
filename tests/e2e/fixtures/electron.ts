@@ -38,7 +38,7 @@ async function allocatePort(): Promise<number> {
   });
 }
 
-async function launchClawXElectron(homeDir: string, userDataDir: string): Promise<ElectronApplication> {
+async function launchMyClawElectron(homeDir: string, userDataDir: string): Promise<ElectronApplication> {
   const hostApiPort = await allocatePort();
   const electronEnv = process.platform === 'linux'
     ? { ELECTRON_DISABLE_SANDBOX: '1' }
@@ -85,7 +85,7 @@ export const test = base.extend<ElectronFixtures>({
   },
 
   launchElectronApp: async ({ homeDir, userDataDir }, provideLauncher) => {
-    await provideLauncher(async () => await launchClawXElectron(homeDir, userDataDir));
+    await provideLauncher(async () => await launchMyClawElectron(homeDir, userDataDir));
   },
 
   electronApp: async ({ launchElectronApp }, provideElectronApp) => {

@@ -926,7 +926,7 @@ export async function getActiveOpenClawProviders(): Promise<Set<string>> {
 
 /**
  * Read models.providers entries and agents.defaults.model from openclaw.json.
- * Used by ClawX to seed the provider store when it's empty but providers are
+ * Used by MyClaw to seed the provider store when it's empty but providers are
  * configured externally (e.g. via CLI or by editing openclaw.json directly).
  */
 export async function getOpenClawProvidersConfig(): Promise<{
@@ -976,7 +976,7 @@ export async function getOpenClawProvidersConfig(): Promise<{
 }
 
 /**
- * Write the ClawX gateway token into ~/.openclaw/openclaw.json.
+ * Write the MyClaw gateway token into ~/.openclaw/openclaw.json.
  */
 export async function syncGatewayTokenToConfig(token: string): Promise<void> {
   return withConfigLock(async () => {
@@ -998,7 +998,7 @@ export async function syncGatewayTokenToConfig(token: string): Promise<void> {
     auth.token = token;
     gateway.auth = auth;
 
-    // Packaged ClawX loads the renderer from file://, so the gateway must allow
+    // Packaged MyClaw loads the renderer from file://, so the gateway must allow
     // that origin for the chat WebSocket handshake.
     const controlUi = (
       gateway.controlUi && typeof gateway.controlUi === 'object'
@@ -1058,7 +1058,7 @@ export async function syncBrowserConfigToOpenClaw(): Promise<void> {
  * Ensure session idle-reset is configured in ~/.openclaw/openclaw.json.
  *
  * By default OpenClaw resets the "main" session daily at 04:00 local time,
- * which means conversations disappear after roughly one day.  ClawX sets
+ * which means conversations disappear after roughly one day.  MyClaw sets
  * `session.idleMinutes` to 10 080 (7 days) so that conversations are
  * preserved for a week unless the user has explicitly configured their own
  * value.  When `idleMinutes` is set without `session.reset` /
@@ -1181,7 +1181,7 @@ export async function updateSingleAgentModelProvider(
  * Removes known-invalid keys that cause OpenClaw's strict Zod validation
  * to reject the entire config on startup.  Uses a conservative **blocklist**
  * approach: only strips keys that are KNOWN to be misplaced by older
- * OpenClaw/ClawX versions or external tools.
+ * OpenClaw/MyClaw versions or external tools.
  *
  * Why blocklist instead of allowlist?
  *   • Allowlist (e.g. `VALID_SKILLS_KEYS`) would strip any NEW valid keys
@@ -1313,7 +1313,7 @@ export async function sanitizeOpenClawConfig(): Promise<void> {
     // ── tools.web.search.kimi ─────────────────────────────────────
     // OpenClaw web_search(kimi) prioritizes tools.web.search.kimi.apiKey over
     // environment/auth-profiles. A stale inline key can cause persistent 401s.
-    // When ClawX-managed moonshot provider exists, prefer centralized key
+    // When MyClaw-managed moonshot provider exists, prefer centralized key
     // resolution and strip the inline key.
     const providers = ((config.models as Record<string, unknown> | undefined)?.providers as Record<string, unknown> | undefined) || {};
     if (providers[OPENCLAW_PROVIDER_KEY_MOONSHOT]) {
@@ -1334,7 +1334,7 @@ export async function sanitizeOpenClawConfig(): Promise<void> {
 
     // ── tools.profile & sessions.visibility ───────────────────────
     // OpenClaw 3.8+ requires tools.profile = 'full' and tools.sessions.visibility = 'all'
-    // for ClawX to properly integrate with its updated tool system.
+    // for MyClaw to properly integrate with its updated tool system.
     const toolsConfig = (config.tools as Record<string, unknown> | undefined) || {};
     let toolsModified = false;
 
@@ -1438,7 +1438,7 @@ export async function sanitizeOpenClawConfig(): Promise<void> {
 
       // ── qqbot → openclaw-qqbot migration ────────────────────────
       // The qqbot npm package (@tencent-connect/openclaw-qqbot) declares
-      // id="openclaw-qqbot" in its manifest, but older ClawX versions
+      // id="openclaw-qqbot" in its manifest, but older MyClaw versions
       // wrote bare "qqbot" into plugins.allow.  Migrate to the manifest ID
       // so the Gateway can resolve the plugin correctly.
       const LEGACY_QQBOT_ID = 'qqbot';
@@ -1556,7 +1556,7 @@ export async function sanitizeOpenClawConfig(): Promise<void> {
     // ── channels default-account migration ─────────────────────────
     // Most OpenClaw channel plugins read the default account's credentials
     // from the top level of `channels.<type>` (e.g. channels.feishu.appId),
-    // but ClawX historically stored them only under `channels.<type>.accounts.default`.
+    // but MyClaw historically stored them only under `channels.<type>.accounts.default`.
     // Mirror the default account credentials at the top level so plugins can
     // discover them.
     const channelsObj = config.channels as Record<string, Record<string, unknown>> | undefined;

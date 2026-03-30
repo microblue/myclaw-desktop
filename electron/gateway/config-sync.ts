@@ -55,7 +55,7 @@ const CHANNEL_PLUGIN_MAP: Record<string, { dirName: string; npmName: string }> =
 
 /**
  * OpenClaw 3.22+ ships Discord, Telegram, and other channels as built-in
- * extensions.  If a previous ClawX version copied one of these into
+ * extensions.  If a previous MyClaw version copied one of these into
  * ~/.openclaw/extensions/, the broken copy overrides the working built-in
  * plugin and must be removed.
  */
@@ -198,7 +198,7 @@ export async function syncGatewayConfigBeforeLaunch(
 
     // Also ensure plugins referenced in plugins.allow are installed even if
     // they have no channels.X section yet (e.g. qqbot added via plugins.allow
-    // but never fully saved through ClawX UI).
+    // but never fully saved through MyClaw UI).
     try {
       const rawCfg = await readOpenClawConfig();
       const allowList = Array.isArray(rawCfg.plugins?.allow) ? (rawCfg.plugins!.allow as string[]) : [];

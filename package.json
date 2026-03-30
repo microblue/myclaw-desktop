@@ -1,5 +1,5 @@
 {
-    "name": "clawx",
+    "name": "myclaw-desktop",
     "version": "0.3.3-beta.0",
     "pnpm": {
         "onlyBuiltDependencies": [
@@ -26,9 +26,9 @@
             ]
         }
     },
-    "description": "ClawX - Graphical AI Assistant based on OpenClaw",
+    "description": "MyClaw Desktop - Graphical AI Assistant based on OpenClaw",
     "main": "dist-electron/main/index.js",
-    "author": "ClawX Team",
+    "author": "MyClaw Team",
     "license": "MIT",
     "private": true,
     "scripts": {
