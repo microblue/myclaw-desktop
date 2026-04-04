@@ -22,8 +22,9 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-latest
-            platform: mac
+          # macOS build temporarily disabled (no code signing certificate)
+          # - os: macos-latest
+          #   platform: mac
           - os: windows-latest
             platform: win
           - os: ubuntu-latest
