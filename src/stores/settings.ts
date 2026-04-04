@@ -81,7 +81,7 @@ const defaultSettings = {
   proxyBypassRules: '<local>;localhost;127.0.0.1;::1',
   updateChannel: 'stable' as UpdateChannel,
   autoCheckUpdate: true,
-  autoDownloadUpdate: false,
+  autoDownloadUpdate: true,
   sidebarCollapsed: false,
   devModeUnlocked: false,
   setupComplete: false,
@@ -178,7 +178,7 @@ export const useSettingsStore = create<SettingsState>()(
       resetSettings: () => set(defaultSettings),
     }),
     {
-      name: 'clawx-settings',
+      name: 'myclaw-settings',
     }
   )
 );

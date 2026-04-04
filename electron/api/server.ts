@@ -53,7 +53,7 @@ export function getHostApiToken(): string {
   return hostApiToken;
 }
 
-export function startHostApiServer(ctx: HostApiContext, port = getPort('CLAWX_HOST_API')): Server {
+export function startHostApiServer(ctx: HostApiContext, port = getPort('MYCLAW_HOST_API')): Server {
   // Generate a cryptographically random token for this session.
   hostApiToken = randomBytes(32).toString('hex');
 

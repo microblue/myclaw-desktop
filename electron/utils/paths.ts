@@ -5,7 +5,7 @@
 import { createRequire } from 'node:module';
 import { join } from 'path';
 import { homedir } from 'os';
-import { existsSync, mkdirSync, readFileSync, realpathSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync } from 'fs';
 
 const require = createRequire(import.meta.url);
 
@@ -24,7 +24,7 @@ function getElectronApp() {
     return (require('electron') as typeof import('electron')).app;
   }
 
-  const fallbackUserData = process.env.CLAWX_USER_DATA_DIR?.trim() || join(homedir(), '.clawx');
+  const fallbackUserData = process.env.MYCLAW_USER_DATA_DIR?.trim() || join(homedir(), '.myclaw');
   const fallbackAppPath = process.cwd();
   const fallbackApp: ElectronAppLike = {
     isPackaged: false,
@@ -65,7 +65,24 @@ export function getOpenClawSkillsDir(): string {
  * Get MyClaw config directory
  */
 export function getMyClawConfigDir(): string {
-  return join(homedir(), '.clawx');
+  return join(homedir(), '.myclaw');
+}
+
+/**
+ * Migrate legacy ~/.clawx directory to ~/.myclaw on startup.
+ * Only runs if ~/.clawx exists and ~/.myclaw does not.
+ */
+export function migrateClawxToMyclaw(): void {
+  const oldDir = join(homedir(), '.clawx');
+  const newDir = join(homedir(), '.myclaw');
+  if (existsSync(oldDir) && !existsSync(newDir)) {
+    try {
+      renameSync(oldDir, newDir);
+      console.log(`[myclaw-migration] Migrated ${oldDir} → ${newDir}`);
+    } catch (err) {
+      console.error(`[myclaw-migration] Failed to migrate ${oldDir} → ${newDir}:`, err);
+    }
+  }
 }
 
 /**

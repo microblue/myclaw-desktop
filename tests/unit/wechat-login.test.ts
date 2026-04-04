@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { testHome } = vi.hoisted(() => {
   const suffix = Math.random().toString(36).slice(2);
   return {
-    testHome: `/tmp/clawx-wechat-login-${suffix}`,
+    testHome: `/tmp/myclaw-wechat-login-${suffix}`,
   };
 });
 
@@ -25,7 +25,7 @@ vi.mock('node:os', async () => {
 vi.mock('electron', () => ({
   app: {
     isPackaged: false,
-    getPath: () => '/tmp/clawx-test-user-data',
+    getPath: () => '/tmp/myclaw-test-user-data',
     getVersion: () => '0.0.0-test',
     getAppPath: () => '/tmp',
   },

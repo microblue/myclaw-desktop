@@ -10,10 +10,10 @@ const GATEWAY_FETCH_PRELOAD_SOURCE = `'use strict';
 (function () {
   var _f = globalThis.fetch;
   if (typeof _f !== 'function') return;
-  if (globalThis.__clawxFetchPatched) return;
-  globalThis.__clawxFetchPatched = true;
+  if (globalThis.__myclawFetchPatched) return;
+  globalThis.__myclawFetchPatched = true;
 
-  globalThis.fetch = function clawxFetch(input, init) {
+  globalThis.fetch = function myclawFetch(input, init) {
     var url =
       typeof input === 'string' ? input
         : input && typeof input === 'object' && typeof input.url === 'string'
@@ -42,8 +42,8 @@ const GATEWAY_FETCH_PRELOAD_SOURCE = `'use strict';
   if (process.platform === 'win32') {
     try {
       var cp = require('child_process');
-      if (!cp.__clawxPatched) {
-        cp.__clawxPatched = true;
+      if (!cp.__myclawPatched) {
+        cp.__myclawPatched = true;
         ['spawn', 'exec', 'execFile', 'fork', 'spawnSync', 'execSync', 'execFileSync'].forEach(function(method) {
           var original = cp[method];
           if (typeof original !== 'function') return;

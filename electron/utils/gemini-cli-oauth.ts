@@ -512,7 +512,7 @@ async function discoverProject(accessToken: string): Promise<string> {
     Authorization: `Bearer ${accessToken}`,
     'Content-Type': 'application/json',
     'User-Agent': 'google-api-nodejs-client/9.15.1',
-    'X-Goog-Api-Client': 'gl-node/clawx',
+    'X-Goog-Api-Client': 'gl-node/myclaw',
   };
 
   const loadBody = {

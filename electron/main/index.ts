@@ -44,9 +44,9 @@ import { browserOAuthManager } from '../utils/browser-oauth';
 import { whatsAppLoginManager } from '../utils/whatsapp-login';
 import { syncAllProviderAuthToRuntime } from '../services/providers/provider-runtime-sync';
 
-const WINDOWS_APP_USER_MODEL_ID = 'app.clawx.desktop';
-const isE2EMode = process.env.CLAWX_E2E === '1';
-const requestedUserDataDir = process.env.CLAWX_USER_DATA_DIR?.trim();
+const WINDOWS_APP_USER_MODEL_ID = 'app.myclaw.desktop';
+const isE2EMode = process.env.MYCLAW_E2E === '1';
+const requestedUserDataDir = process.env.MYCLAW_USER_DATA_DIR?.trim();
 
 if (isE2EMode && requestedUserDataDir) {
   app.setPath('userData', requestedUserDataDir);
@@ -69,11 +69,11 @@ if (isE2EMode && requestedUserDataDir) {
 app.disableHardwareAcceleration();
 
 // On Linux, set CHROME_DESKTOP so Chromium can find the correct .desktop file.
-// On Wayland this maps the running window to clawx.desktop (→ icon + app grouping);
+// On Wayland this maps the running window to myclaw.desktop (→ icon + app grouping);
 // on X11 it supplements the StartupWMClass matching.
 // Must be called before app.whenReady() / before any window is created.
 if (process.platform === 'linux') {
-  app.setDesktopName('clawx.desktop');
+  app.setDesktopName('myclaw.desktop');
 }
 
 // Prevent multiple instances of the app from running simultaneously.
@@ -92,7 +92,7 @@ if (gotElectronLock && !isE2EMode) {
   try {
     const fileLock = acquireProcessInstanceFileLock({
       userDataDir: app.getPath('userData'),
-      lockName: 'clawx',
+      lockName: 'myclaw',
       force: true, // Electron lock already guarantees exclusivity; force-clean orphan/recycled-PID locks
     });
     gotFileLock = fileLock.acquired;

@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="#功能特性">功能特性</a> •
-  <a href="#为什么选择-clawx">为什么选择 MyClaw</a> •
+  <a href="#为什么选择-myclaw">为什么选择 MyClaw</a> •
   <a href="#快速上手">快速上手</a> •
   <a href="#系统架构">系统架构</a> •
   <a href="#开发指南">开发指南</a> •

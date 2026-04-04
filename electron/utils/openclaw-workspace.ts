@@ -11,8 +11,8 @@ import { homedir } from 'os';
 import { logger } from './logger';
 import { getResourcesDir } from './paths';
 
-const CLAWX_BEGIN = '<!-- clawx:begin -->';
-const CLAWX_END = '<!-- clawx:end -->';
+const MYCLAW_BEGIN = '<!-- myclaw:begin -->';
+const MYCLAW_END = '<!-- myclaw:end -->';
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -34,11 +34,11 @@ async function ensureDir(dir: string): Promise<void> {
  * Otherwise appends it at the end.
  */
 export function mergeMyClawSection(existing: string, section: string): string {
-  const wrapped = `${CLAWX_BEGIN}\n${section.trim()}\n${CLAWX_END}`;
-  const beginIdx = existing.indexOf(CLAWX_BEGIN);
-  const endIdx = existing.indexOf(CLAWX_END);
+  const wrapped = `${MYCLAW_BEGIN}\n${section.trim()}\n${MYCLAW_END}`;
+  const beginIdx = existing.indexOf(MYCLAW_BEGIN);
+  const endIdx = existing.indexOf(MYCLAW_END);
   if (beginIdx !== -1 && endIdx !== -1) {
-    return existing.slice(0, beginIdx) + wrapped + existing.slice(endIdx + CLAWX_END.length);
+    return existing.slice(0, beginIdx) + wrapped + existing.slice(endIdx + MYCLAW_END.length);
   }
   return existing.trimEnd() + '\n\n' + wrapped + '\n';
 }
@@ -117,12 +117,12 @@ export async function repairMyClawOnlyBootstrapFiles(): Promise<void> {
       } catch {
         continue;
       }
-      const beginIdx = content.indexOf(CLAWX_BEGIN);
-      const endIdx = content.indexOf(CLAWX_END);
+      const beginIdx = content.indexOf(MYCLAW_BEGIN);
+      const endIdx = content.indexOf(MYCLAW_END);
       if (beginIdx === -1 || endIdx === -1) continue;
 
       const before = content.slice(0, beginIdx).trim();
-      const after = content.slice(endIdx + CLAWX_END.length).trim();
+      const after = content.slice(endIdx + MYCLAW_END.length).trim();
       if (before === '' && after === '') {
         try {
           await unlink(filePath);
@@ -151,7 +151,7 @@ async function mergeMyClawContextOnce(): Promise<number> {
 
   let files: string[];
   try {
-    files = (await readdir(contextDir)).filter((f) => f.endsWith('.clawx.md'));
+    files = (await readdir(contextDir)).filter((f) => f.endsWith('.myclaw.md'));
   } catch {
     return 0;
   }
@@ -163,7 +163,7 @@ async function mergeMyClawContextOnce(): Promise<number> {
     await ensureDir(workspaceDir);
 
     for (const file of files) {
-      const targetName = file.replace('.clawx.md', '.md');
+      const targetName = file.replace('.myclaw.md', '.md');
       const targetPath = join(workspaceDir, targetName);
 
       if (!(await fileExists(targetPath))) {

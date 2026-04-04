@@ -144,7 +144,7 @@ function shouldFallbackToBrowser(message: string): boolean {
 
 function allowLocalhostFallback(): boolean {
   try {
-    return window.localStorage.getItem('clawx:allow-localhost-fallback') === '1';
+    return window.localStorage.getItem('myclaw:allow-localhost-fallback') === '1';
   } catch {
     return false;
   }

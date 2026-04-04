@@ -6,8 +6,8 @@ import { PORTS } from '../utils/config';
  * and the OpenClaw Gateway are permitted to make cross-origin requests.
  */
 const ALLOWED_ORIGINS = new Set([
-  `http://127.0.0.1:${PORTS.CLAWX_DEV}`,
-  `http://localhost:${PORTS.CLAWX_DEV}`,
+  `http://127.0.0.1:${PORTS.MYCLAW_DEV}`,
+  `http://localhost:${PORTS.MYCLAW_DEV}`,
   `http://127.0.0.1:${PORTS.OPENCLAW_GATEWAY}`,
   `http://localhost:${PORTS.OPENCLAW_GATEWAY}`,
 ]);

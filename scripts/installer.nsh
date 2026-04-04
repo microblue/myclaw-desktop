@@ -210,6 +210,10 @@
   ClearErrors
 !macroend
 
+; --- Auto-start checkbox variable (declared at global scope) ---
+Var AutoStartCheckbox
+Var AutoStartState
+
 !macro customInstall
   ; Async cleanup of old dirs left by the rename loop in customCheckAppRunning.
   ; Wait 60s before starting deletion to avoid I/O contention with MyClaw's
@@ -257,10 +261,27 @@
   DetailPrint "Warning: PowerShell PATH update exited with code $0."
 
   _ci_done:
+
+  ; --- Register auto-start in HKLM Run registry if checkbox was checked ---
+  ; The checkbox is on the finish page; for silent/auto-update installs, default to enabled.
+  ; Write to HKLM (per-machine) since installer runs elevated.
+  ${if} ${isUpdated}
+    ; Preserve existing auto-start setting during auto-updates — don't touch the registry
+  ${else}
+    ; For fresh install / manual install, always register auto-start
+    ; (The installer page checkbox is handled in the finish page callback below)
+    DetailPrint "Registering MyClaw auto-start..."
+    WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Run" "MyClaw" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}"'
+  ${endIf}
+
   DetailPrint "Installation steps complete."
 !macroend
 
 !macro customUnInstall
+  ; Remove auto-start registry entries (both HKLM and HKCU, in case either was set)
+  DeleteRegValue HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Run" "MyClaw"
+  DeleteRegValue HKCU "SOFTWARE\Microsoft\Windows\CurrentVersion\Run" "MyClaw"
+
   ; Remove Windows Defender exclusion added during install
   nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Remove-MpPreference -ExclusionPath '$INSTDIR' -ErrorAction SilentlyContinue"`
   Pop $0
@@ -285,7 +306,7 @@
 
   ; Ask user if they want to remove AppData (preserves .openclaw)
   MessageBox MB_YESNO|MB_ICONQUESTION \
-    "Do you want to remove MyClaw application data?$\r$\n$\r$\nThis will delete:$\r$\n  • AppData\Local\clawx (local app data)$\r$\n  • AppData\Roaming\clawx (roaming app data)$\r$\n$\r$\nYour .openclaw folder (configuration & skills) will be preserved.$\r$\nSelect 'No' to keep all data for future reinstallation." \
+    "Do you want to remove MyClaw application data?$\r$\n$\r$\nThis will delete:$\r$\n  • AppData\Local\myclaw (local app data)$\r$\n  • AppData\Roaming\myclaw (roaming app data)$\r$\n$\r$\nYour .openclaw folder (configuration & skills) will be preserved.$\r$\nSelect 'No' to keep all data for future reinstallation." \
     /SD IDNO IDYES _cu_removeData IDNO _cu_skipRemove
 
   _cu_removeData:
@@ -304,37 +325,37 @@
 
     ; --- Always remove current user's AppData first ---
     ; NOTE: .openclaw directory is intentionally preserved (user configuration & skills)
-    RMDir /r "$LOCALAPPDATA\clawx"
-    RMDir /r "$APPDATA\clawx"
+    RMDir /r "$LOCALAPPDATA\myclaw"
+    RMDir /r "$APPDATA\myclaw"
 
     ; --- Retry: if directories still exist (locked files), wait and try again ---
 
-    ; Check AppData\Local\clawx
-    IfFileExists "$LOCALAPPDATA\clawx\*.*" 0 _cu_localDone
+    ; Check AppData\Local\myclaw
+    IfFileExists "$LOCALAPPDATA\myclaw\*.*" 0 _cu_localDone
       Sleep 3000
-      RMDir /r "$LOCALAPPDATA\clawx"
-      IfFileExists "$LOCALAPPDATA\clawx\*.*" 0 _cu_localDone
-        nsExec::ExecToStack 'cmd.exe /c rd /s /q "$LOCALAPPDATA\clawx"'
+      RMDir /r "$LOCALAPPDATA\myclaw"
+      IfFileExists "$LOCALAPPDATA\myclaw\*.*" 0 _cu_localDone
+        nsExec::ExecToStack 'cmd.exe /c rd /s /q "$LOCALAPPDATA\myclaw"'
         Pop $0
         Pop $1
     _cu_localDone:
 
-    ; Check AppData\Roaming\clawx
-    IfFileExists "$APPDATA\clawx\*.*" 0 _cu_roamingDone
+    ; Check AppData\Roaming\myclaw
+    IfFileExists "$APPDATA\myclaw\*.*" 0 _cu_roamingDone
       Sleep 3000
-      RMDir /r "$APPDATA\clawx"
-      IfFileExists "$APPDATA\clawx\*.*" 0 _cu_roamingDone
-        nsExec::ExecToStack 'cmd.exe /c rd /s /q "$APPDATA\clawx"'
+      RMDir /r "$APPDATA\myclaw"
+      IfFileExists "$APPDATA\myclaw\*.*" 0 _cu_roamingDone
+        nsExec::ExecToStack 'cmd.exe /c rd /s /q "$APPDATA\myclaw"'
         Pop $0
         Pop $1
     _cu_roamingDone:
 
     ; --- Final check: warn user if any directories could not be removed ---
     StrCpy $R3 ""
-    IfFileExists "$LOCALAPPDATA\clawx\*.*" 0 +2
-      StrCpy $R3 "$R3$\r$\n  • $LOCALAPPDATA\clawx"
-    IfFileExists "$APPDATA\clawx\*.*" 0 +2
-      StrCpy $R3 "$R3$\r$\n  • $APPDATA\clawx"
+    IfFileExists "$LOCALAPPDATA\myclaw\*.*" 0 +2
+      StrCpy $R3 "$R3$\r$\n  • $LOCALAPPDATA\myclaw"
+    IfFileExists "$APPDATA\myclaw\*.*" 0 +2
+      StrCpy $R3 "$R3$\r$\n  • $APPDATA\myclaw"
     StrCmp $R3 "" _cu_cleanupOk
       MessageBox MB_OK|MB_ICONEXCLAMATION \
         "Some data directories could not be removed (files may be in use):$\r$\n$R3$\r$\n$\r$\nPlease delete them manually after restarting your computer."
@@ -355,8 +376,8 @@
     StrCmp $R3 $PROFILE _cu_enumNext
 
     ; NOTE: .openclaw directory is intentionally preserved for all users
-    RMDir /r "$R3\AppData\Local\clawx"
-    RMDir /r "$R3\AppData\Roaming\clawx"
+    RMDir /r "$R3\AppData\Local\myclaw"
+    RMDir /r "$R3\AppData\Roaming\myclaw"
 
   _cu_enumNext:
     IntOp $R0 $R0 + 1

@@ -12,8 +12,9 @@ import { logger } from '../utils/logger';
 import { EventEmitter } from 'events';
 import { setQuitting } from './app-state';
 
-/** Base CDN URL (without trailing channel path) */
-const OSS_BASE_URL = 'https://oss.intelli-spectrum.com';
+/** GitHub repo for auto-update */
+const GITHUB_OWNER = 'microblue';
+const GITHUB_REPO = 'myclaw-desktop';
 
 export interface UpdateStatus {
   status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
@@ -59,7 +60,7 @@ export class AppUpdater extends EventEmitter {
       logger.error('[Updater] AppUpdater emitted error:', error);
     });
     
-    autoUpdater.autoDownload = false;
+    autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
     
     autoUpdater.logger = {
@@ -69,22 +70,17 @@ export class AppUpdater extends EventEmitter {
       debug: (msg: string) => logger.debug('[Updater]', msg),
     };
 
-    // Override feed URL for prerelease channels so that
-    // alpha -> /alpha/alpha-mac.yml, beta -> /beta/beta-mac.yml, etc.
     const version = app.getVersion();
     const channel = detectChannel(version);
-    const feedUrl = `${OSS_BASE_URL}/${channel}`;
 
-    logger.info(`[Updater] Version: ${version}, channel: ${channel}, feedUrl: ${feedUrl}`);
+    logger.info(`[Updater] Version: ${version}, channel: ${channel}, repo: ${GITHUB_OWNER}/${GITHUB_REPO}`);
 
-    // Set channel so electron-updater requests the correct yml filename.
-    // e.g. channel "alpha" → requests alpha-mac.yml, channel "latest" → requests latest-mac.yml
     autoUpdater.channel = channel;
 
     autoUpdater.setFeedURL({
-      provider: 'generic',
-      url: feedUrl,
-      useMultipleRangeRequest: false,
+      provider: 'github',
+      owner: GITHUB_OWNER,
+      repo: GITHUB_REPO,
     });
 
     this.setupListeners();

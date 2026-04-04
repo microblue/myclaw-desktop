@@ -4,6 +4,8 @@
  */
 
 import { randomBytes } from 'crypto';
+import { existsSync, renameSync } from 'fs';
+import { join } from 'path';
 import { app } from 'electron';
 import { resolveSupportedLanguage } from '../../shared/language';
 
@@ -15,7 +17,7 @@ let settingsStoreInstance: any = null;
  * Generate a random token for gateway authentication
  */
 function generateToken(): string {
-  return `clawx-${randomBytes(16).toString('hex')}`;
+  return `myclaw-${randomBytes(16).toString('hex')}`;
 }
 
 /**
@@ -108,6 +110,33 @@ function createDefaultSettings(): AppSettings {
     enabledSkills: [],
     disabledSkills: [],
   };
+}
+
+/**
+ * Migrate legacy clawx app data directories to myclaw on Windows.
+ * Handles both Local and Roaming AppData directories.
+ */
+export function migrateWindowsAppData(): void {
+  if (process.platform !== 'win32') return;
+  const localAppData = process.env.LOCALAPPDATA;
+  const roamingAppData = process.env.APPDATA;
+  const migrations: [string, string][] = [];
+  if (localAppData) {
+    migrations.push([join(localAppData, 'clawx'), join(localAppData, 'myclaw')]);
+  }
+  if (roamingAppData) {
+    migrations.push([join(roamingAppData, 'clawx'), join(roamingAppData, 'myclaw')]);
+  }
+  for (const [oldDir, newDir] of migrations) {
+    if (existsSync(oldDir) && !existsSync(newDir)) {
+      try {
+        renameSync(oldDir, newDir);
+        console.log(`[myclaw-migration] Migrated ${oldDir} → ${newDir}`);
+      } catch (err) {
+        console.error(`[myclaw-migration] Failed to migrate ${oldDir} → ${newDir}:`, err);
+      }
+    }
+  }
 }
 
 /**

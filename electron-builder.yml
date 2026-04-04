@@ -54,12 +54,9 @@ npmRebuild: false
 # Primary: Alibaba Cloud OSS (fast for Chinese users, used for auto-update)
 # Fallback: GitHub Releases (backup, used when OSS is unavailable)
 publish:
-  - provider: generic
-    url: https://oss.intelli-spectrum.com/latest
-    useMultipleRangeRequest: false
   - provider: github
-    owner: ValueCell-ai
-    repo: MyClaw
+    owner: microblue
+    repo: myclaw-desktop
 
 # macOS Configuration
 mac:
@@ -127,7 +124,7 @@ win:
 
 nsis:
   oneClick: false
-  perMachine: false
+  perMachine: true
   warningsAsErrors: false
   allowToChangeInstallationDirectory: true
   deleteAppDataOnUninstall: false
@@ -174,7 +171,7 @@ linux:
       Comment: AI Assistant powered by OpenClaw
       Categories: Utility;Network;
       Keywords: ai;assistant;automation;chat;
-      StartupWMClass: clawx
+      StartupWMClass: myclaw
 
 appImage:
   license: LICENSE

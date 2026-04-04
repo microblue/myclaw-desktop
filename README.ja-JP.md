@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="#機能">機能</a> •
-  <a href="#なぜclawxなのか">なぜMyClawなのか</a> •
+  <a href="#なぜmyclawなのか">なぜMyClawなのか</a> •
   <a href="#はじめに">はじめに</a> •
   <a href="#アーキテクチャ">アーキテクチャ</a> •
   <a href="#開発">開発</a> •
