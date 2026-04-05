@@ -56,7 +56,7 @@ npmRebuild: false
 publish:
   - provider: github
     owner: microblue
-    repo: myclaw-desktop
+    repo: myclaw-desktop-releases
 
 # macOS Configuration
 mac:
