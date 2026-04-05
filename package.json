@@ -1,6 +1,6 @@
 {
     "name": "myclaw-desktop",
-    "version": "1.1.0-beta.0",
+    "version": "1.1.1-beta.0",
     "pnpm": {
         "onlyBuiltDependencies": [
             "@discordjs/opus",
@@ -26,9 +26,9 @@
             ]
         }
     },
-    "description": "MyClaw Desktop - Graphical AI Assistant based on OpenClaw",
+    "description": "MyClaw.One Desktop - Graphical AI Assistant based on OpenClaw",
     "main": "dist-electron/main/index.js",
-    "author": "MyClaw Team",
+    "author": "MyClaw.One Team",
     "license": "MIT",
     "private": true,
     "scripts": {
