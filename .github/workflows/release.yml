@@ -154,6 +154,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
+          repository: microblue/myclaw-desktop-releases
           files: |
             release-artifacts/**/*.dmg
             release-artifacts/**/*.zip
@@ -167,45 +168,44 @@ jobs:
           make_latest: false
           generate_release_notes: true
           body: |
-            ## 🚀 MyClaw ${{ github.ref_name }}
-            
-            MyClaw - Graphical AI Assistant based on OpenClaw
-            
+            ## 🚀 MyClaw.One ${{ github.ref_name }}
+
+            MyClaw.One - Graphical AI Assistant based on OpenClaw
+
             ### 📦 Downloads
-            
+
             Please select the appropriate installer for your operating system and architecture:
-            
+
             #### macOS
-            - **Apple Silicon (M1/M2/M3/M4)**: `MyClaw-*-mac-arm64.dmg`
-            - **Intel (x64)**: `MyClaw-*-mac-x64.dmg`
-            
+            - **Apple Silicon (M1/M2/M3/M4)**: `MyClaw.One-*-mac-arm64.dmg`
+            - **Intel (x64)**: `MyClaw.One-*-mac-x64.dmg`
+
             #### Windows
-            - **Installer (x64)**: `MyClaw-*-win-x64.exe`
-            - **Installer (ARM64)**: `MyClaw-*-win-arm64.exe`
-            
+            - **Installer (x64)**: `MyClaw.One-*-win-x64.exe`
+
             #### Linux
-            - **AppImage (x64)**: `MyClaw-*-linux-x86_64.AppImage` (Universal format, recommended)
-            - **AppImage (ARM64)**: `MyClaw-*-linux-arm64.AppImage`
-            - **Debian/Ubuntu (x64)**: `MyClaw-*-linux-amd64.deb`
-            - **Debian/Ubuntu (ARM64)**: `MyClaw-*-linux-arm64.deb`
-            - **RPM (x64)**: `MyClaw-*-linux-x86_64.rpm`
-            
+            - **AppImage (x64)**: `MyClaw.One-*-linux-x86_64.AppImage` (Universal format, recommended)
+            - **AppImage (ARM64)**: `MyClaw.One-*-linux-arm64.AppImage`
+            - **Debian/Ubuntu (x64)**: `MyClaw.One-*-linux-amd64.deb`
+            - **Debian/Ubuntu (ARM64)**: `MyClaw.One-*-linux-arm64.deb`
+            - **RPM (x64)**: `MyClaw.One-*-linux-x86_64.rpm`
+
             ### 📝 Release Notes
-            
+
             See the auto-generated release notes below for detailed changes.
-            
+
             ### ⚠️ Installation Notes
-            
+
             - **macOS**: On first launch, you may see "cannot verify developer". Go to System Preferences → Security & Privacy to allow the app to run
             - **Windows**: SmartScreen may block the app. Click "More info" → "Run anyway" to proceed
-            - **Linux AppImage**: First run `chmod +x MyClaw-*.AppImage` to add execute permission. On Ubuntu 22.04 you may also need `sudo apt install libfuse2`; on Ubuntu 24.04 use `sudo apt install libfuse2t64`
+            - **Linux AppImage**: First run `chmod +x MyClaw.One-*.AppImage` to add execute permission. On Ubuntu 22.04 you may also need `sudo apt install libfuse2`; on Ubuntu 24.04 use `sudo apt install libfuse2t64`
             - **Linux .deb (Ubuntu 24.04)**: If installation fails due to missing dependencies, use `sudo apt install libgtk-3-0t64 libnotify4t64 libxss1t64` before installing
-            
+
             ---
-            
-            💬 Found an issue? Please submit an [Issue](https://github.com/${{ github.repository }}/issues)
+
+            💬 Found an issue? Please submit an [Issue](https://github.com/microblue/myclaw-desktop-releases/issues)
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASES_TOKEN }}
 
   # ──────────────────────────────────────────────────────────────
   # Job: Finalize Release
@@ -223,7 +223,7 @@ jobs:
     steps:
       - name: Promote release from pre-release to latest
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           IS_PRERELEASE_CHANNEL=false
@@ -239,6 +239,6 @@ jobs:
             gh release edit "$TAG" \
               --prerelease=false \
               --latest \
-              --repo "${{ github.repository }}"
+              --repo "microblue/myclaw-desktop-releases"
             echo "Release $TAG is now the latest release."
           fi
