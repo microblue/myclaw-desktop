@@ -14,7 +14,7 @@ import { setQuitting } from './app-state';
 
 /** GitHub repo for auto-update */
 const GITHUB_OWNER = 'microblue';
-const GITHUB_REPO = 'myclaw-desktop';
+const GITHUB_REPO = 'myclaw-desktop-releases';
 
 export interface UpdateStatus {
   status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
