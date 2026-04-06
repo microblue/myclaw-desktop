@@ -458,34 +458,24 @@ function patchBrokenModules(nodeModulesDir) {
     ].join('\n'),
   };
   const replacePatches = [
+    // openclaw 2026.4.2: bash tool spawn moved from bash-executor.js to tools/bash.js
     {
-      rel: '@mariozechner/pi-coding-agent/dist/core/bash-executor.js',
-      search: `        const child = spawn(shell, [...args, command], {
-            detached: true,
-            env: getShellEnv(),
-            stdio: ["ignore", "pipe", "pipe"],
-        });`,
-      replace: `        const child = spawn(shell, [...args, command], {
-            detached: true,
-            env: getShellEnv(),
-            stdio: ["ignore", "pipe", "pipe"],
-            windowsHide: true,
-        });`,
+      rel: '@mariozechner/pi-coding-agent/dist/core/tools/bash.js',
+      search: `                const child = spawn(shell, [...args, command], {
+                    cwd,
+                    detached: true,
+                    env: env ?? getShellEnv(),
+                    stdio: ["ignore", "pipe", "pipe"],
+                });`,
+      replace: `                const child = spawn(shell, [...args, command], {
+                    cwd,
+                    detached: true,
+                    env: env ?? getShellEnv(),
+                    stdio: ["ignore", "pipe", "pipe"],
+                    windowsHide: true,
+                });`,
     },
-    {
-      rel: '@mariozechner/pi-coding-agent/dist/core/exec.js',
-      search: `        const proc = spawn(command, args, {
-            cwd,
-            shell: false,
-            stdio: ["ignore", "pipe", "pipe"],
-        });`,
-      replace: `        const proc = spawn(command, args, {
-            cwd,
-            shell: false,
-            stdio: ["ignore", "pipe", "pipe"],
-            windowsHide: true,
-        });`,
-    },
+    // exec.js already includes windowsHide: true in openclaw 2026.4.2 — no patch needed.
   ];
 
   let count = 0;
@@ -645,103 +635,11 @@ function findFilesByName(rootDir, matcher) {
 }
 
 function patchBundledRuntime(outputDir) {
-  const replacePatches = [
-    {
-      label: 'workspace command runner',
-      target: () => findFirstFileByName(path.join(outputDir, 'dist'), /^workspace-.*\.js$/),
-      search: `\tconst child = spawn(resolvedCommand, finalArgv.slice(1), {
-\t\tstdio,
-\t\tcwd,
-\t\tenv: resolvedEnv,
-\t\twindowsVerbatimArguments,
-\t\t...shouldSpawnWithShell({
-\t\t\tresolvedCommand,
-\t\t\tplatform: process$1.platform
-\t\t}) ? { shell: true } : {}
-\t});`,
-      replace: `\tconst child = spawn(resolvedCommand, finalArgv.slice(1), {
-\t\tstdio,
-\t\tcwd,
-\t\tenv: resolvedEnv,
-\t\twindowsVerbatimArguments,
-\t\twindowsHide: true,
-\t\t...shouldSpawnWithShell({
-\t\t\tresolvedCommand,
-\t\t\tplatform: process$1.platform
-\t\t}) ? { shell: true } : {}
-\t});`,
-    },
-    {
-      label: 'agent scope command runner',
-      target: () => findFirstFileByName(path.join(outputDir, 'dist', 'plugin-sdk'), /^agent-scope-.*\.js$/),
-      search: `\tconst child = spawn(resolvedCommand, finalArgv.slice(1), {
-\t\tstdio,
-\t\tcwd,
-\t\tenv: resolvedEnv,
-\t\twindowsVerbatimArguments,
-\t\t...shouldSpawnWithShell({
-\t\t\tresolvedCommand,
-\t\t\tplatform: process$1.platform
-\t\t}) ? { shell: true } : {}
-\t});`,
-      replace: `\tconst child = spawn(resolvedCommand, finalArgv.slice(1), {
-\t\tstdio,
-\t\tcwd,
-\t\tenv: resolvedEnv,
-\t\twindowsVerbatimArguments,
-\t\twindowsHide: true,
-\t\t...shouldSpawnWithShell({
-\t\t\tresolvedCommand,
-\t\t\tplatform: process$1.platform
-\t\t}) ? { shell: true } : {}
-\t});`,
-    },
-    {
-      label: 'chrome launcher',
-      target: () => findFirstFileByName(path.join(outputDir, 'dist', 'plugin-sdk'), /^chrome-.*\.js$/),
-      search: `\t\treturn spawn(exe.path, args, {
-\t\t\tstdio: "pipe",
-\t\t\tenv: {
-\t\t\t\t...process.env,
-\t\t\t\tHOME: os.homedir()
-\t\t\t}
-\t\t});`,
-      replace: `\t\treturn spawn(exe.path, args, {
-\t\t\tstdio: "pipe",
-\t\t\twindowsHide: true,
-\t\t\tenv: {
-\t\t\t\t...process.env,
-\t\t\t\tHOME: os.homedir()
-\t\t\t}
-\t\t});`,
-    },
-    {
-      label: 'qmd runner',
-      target: () => findFirstFileByName(path.join(outputDir, 'dist', 'plugin-sdk'), /^qmd-manager-.*\.js$/),
-      search: `\t\t\tconst child = spawn(resolveWindowsCommandShim(this.qmd.command), args, {
-\t\t\t\tenv: this.env,
-\t\t\t\tcwd: this.workspaceDir
-\t\t\t});`,
-      replace: `\t\t\tconst child = spawn(resolveWindowsCommandShim(this.qmd.command), args, {
-\t\t\t\tenv: this.env,
-\t\t\t\tcwd: this.workspaceDir,
-\t\t\t\twindowsHide: true
-\t\t\t});`,
-    },
-    {
-      label: 'mcporter runner',
-      target: () => findFirstFileByName(path.join(outputDir, 'dist', 'plugin-sdk'), /^qmd-manager-.*\.js$/),
-      search: `\t\t\tconst child = spawn(resolveWindowsCommandShim("mcporter"), args, {
-\t\t\t\tenv: this.env,
-\t\t\t\tcwd: this.workspaceDir
-\t\t\t});`,
-      replace: `\t\t\tconst child = spawn(resolveWindowsCommandShim("mcporter"), args, {
-\t\t\t\tenv: this.env,
-\t\t\t\tcwd: this.workspaceDir,
-\t\t\t\twindowsHide: true
-\t\t\t});`,
-    },
-  ];
+  // openclaw 2026.4.2: spawn calls in exec-nWahKiCu.js already include
+  // windowsHide via invocation.windowsHide.  The old workspace/agent-scope/
+  // chrome/qmd/mcporter patches targeted files that no longer exist as
+  // separate chunks — the functionality is now in exec-nWahKiCu.js upstream.
+  const replacePatches = [];
 
   let count = 0;
   for (const patch of replacePatches) {
@@ -768,9 +666,10 @@ function patchBundledRuntime(outputDir) {
     echo`   🩹 Patched ${count} bundled runtime spawn site(s)`;
   }
 
+  // openclaw 2026.4.2: pty adapter moved from pi-embedded to model-runtime
   const ptyTargets = findFilesByName(
     path.join(outputDir, 'dist'),
-    /^(subagent-registry|reply|pi-embedded)-.*\.js$/,
+    /^(subagent-registry|reply|pi-embedded|model-runtime)-.*\.js$/,
   );
   const ptyPatches = [
     {
