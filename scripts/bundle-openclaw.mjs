@@ -266,6 +266,57 @@ for (const [realPath, pkgName] of collected) {
   }
 }
 
+// 5b. Promote extension-level node_modules to the main node_modules.
+//
+// Some openclaw dist chunks (e.g. sticker-cache-*.js) are shared across the
+// entire gateway and import packages like `grammy` as external ESM imports.
+// These shared chunks resolve modules relative to openclaw/dist/, so they can
+// only find packages in openclaw/node_modules/ — NOT in the per-extension
+// node_modules directories (e.g. dist/extensions/telegram/node_modules/).
+//
+// To fix this, we copy every package from each extension's node_modules into
+// the main node_modules/, skipping packages that are already present (the main
+// node_modules wins on version conflicts, since it was resolved by openclaw
+// itself).
+{
+  const extDir = path.join(OUTPUT, 'dist', 'extensions');
+  if (fs.existsSync(extDir)) {
+    let promotedCount = 0;
+    for (const extEntry of fs.readdirSync(extDir, { withFileTypes: true })) {
+      if (!extEntry.isDirectory()) continue;
+      const extNm = path.join(extDir, extEntry.name, 'node_modules');
+      if (!fs.existsSync(extNm)) continue;
+      for (const pkgEntry of fs.readdirSync(extNm, { withFileTypes: true })) {
+        const pkgNames = [];
+        if (pkgEntry.name.startsWith('@')) {
+          // scoped package — enumerate sub-entries
+          const scopeDir = path.join(extNm, pkgEntry.name);
+          try {
+            for (const sub of fs.readdirSync(scopeDir)) {
+              pkgNames.push(`${pkgEntry.name}/${sub}`);
+            }
+          } catch { continue; }
+        } else {
+          pkgNames.push(pkgEntry.name);
+        }
+        for (const pkgName of pkgNames) {
+          const dest = path.join(outputNodeModules, pkgName);
+          if (fs.existsSync(dest)) continue; // already present — skip
+          const src = path.join(extNm, pkgName);
+          try {
+            fs.mkdirSync(normWin(path.dirname(dest)), { recursive: true });
+            fs.cpSync(normWin(src), normWin(dest), { recursive: true, dereference: true });
+            promotedCount++;
+          } catch { /* skip */ }
+        }
+      }
+    }
+    if (promotedCount > 0) {
+      echo`   Promoted ${promotedCount} extension-only package(s) to main node_modules (e.g. grammy)`;
+    }
+  }
+}
+
 // 6. Clean up the bundle to reduce package size
 //
 // This removes platform-agnostic waste: dev artifacts, docs, source maps,
