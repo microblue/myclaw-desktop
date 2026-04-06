@@ -1,0 +1,236 @@
+# MyClaw Release Workflow
+# Builds and publishes releases for macOS, Windows, and Linux
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.0.0)'
+        required: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    strategy:
+      matrix:
+        include:
+          # macOS build temporarily disabled (no code signing certificate)
+          # - os: macos-latest
+          #   platform: mac
+          - os: windows-latest
+            platform: win
+          - os: ubuntu-latest
+            platform: linux
+
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Download uv binaries for macOS
+        if: matrix.platform == 'mac'
+        run: pnpm run uv:download:mac
+
+      - name: Download uv binaries for Windows
+        if: matrix.platform == 'win'
+        run: pnpm run uv:download:win
+
+      - name: Download uv binaries for Linux
+        if: matrix.platform == 'linux'
+        run: pnpm run uv:download:linux
+
+
+      # macOS specific steps
+      - name: Free disk space (macOS)
+        if: matrix.platform == 'mac'
+        run: |
+          echo "=== Disk usage before cleanup ==="
+          df -h /
+          # Remove large pre-installed toolchains not needed for Electron builds
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/local/share/powershell || true
+          sudo rm -rf /usr/local/share/chromium || true
+          sudo rm -rf /usr/local/lib/node_modules || true
+          rm -rf ~/Library/Caches/electron-builder/dmg-builder* || true
+          # Homebrew cleanup
+          brew cleanup --prune=all 2>/dev/null || true
+          echo "=== Disk usage after cleanup ==="
+          df -h /
+
+      # --publish never: prevent electron-builder from auto-publishing to GitHub.
+      # All artifacts are collected and published atomically in the publish job.
+      - name: Build macOS
+        if: matrix.platform == 'mac'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_LINK: ${{ secrets.MAC_CERTS }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          ulimit -n 65536
+          echo "File descriptor limit: $(ulimit -n)"
+          pnpm run package:mac
+
+      # Windows specific steps
+      - name: Build Windows
+        if: matrix.platform == 'win'
+        run: pnpm run package:win
+
+      # Linux specific steps
+      - name: Build Linux
+        if: matrix.platform == 'linux'
+        run: pnpm run package:linux
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.blockmap
+            release/*.exe
+            release/*.AppImage
+            release/*.deb
+            release/*.rpm
+            release/*.yml
+            !release/builder-debug.yml
+          retention-days: 7
+
+  # ──────────────────────────────────────────────────────────────
+  # Job: Publish to GitHub Releases
+  # ──────────────────────────────────────────────────────────────
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Download release artifacts only
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          pattern: release-*
+
+      - name: List all downloaded artifacts
+        run: |
+          echo "=== All artifacts downloaded ==="
+          find release-artifacts/ -type f -exec ls -lh {} \;
+          echo ""
+          echo "=== File tree ==="
+          tree release-artifacts/ || find release-artifacts/ -print
+
+      - name: Remove duplicate builder-debug files
+        run: |
+          echo "Removing builder-debug.yml files to avoid duplicate asset upload conflicts..."
+          find release-artifacts/ -name "builder-debug.yml" -delete -print || true
+
+      - name: Create GitHub Release and upload assets
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          TAG_IS_PRERELEASE=false
+          if [[ "$TAG" == *"alpha"* ]] || [[ "$TAG" == *"beta"* ]]; then
+            TAG_IS_PRERELEASE=true
+          fi
+
+          BODY="## MyClaw.One ${TAG}
+
+          MyClaw.One - Graphical AI Assistant based on OpenClaw
+
+          ### Downloads
+
+          #### Windows
+          - **Installer (x64)**: \`MyClaw.One-*-win-x64.exe\`
+
+          #### Linux
+          - **AppImage (x64)**: \`MyClaw.One-*-linux-x86_64.AppImage\`
+          - **AppImage (ARM64)**: \`MyClaw.One-*-linux-arm64.AppImage\`
+          - **Debian/Ubuntu (x64)**: \`MyClaw.One-*-linux-amd64.deb\`
+          - **Debian/Ubuntu (ARM64)**: \`MyClaw.One-*-linux-arm64.deb\`
+          - **RPM (x64)**: \`MyClaw.One-*-linux-x86_64.rpm\`
+
+          ### Installation Notes
+          - **Windows**: SmartScreen may block the app. Click 'More info' → 'Run anyway'
+          - **Linux AppImage**: Run \`chmod +x MyClaw.One-*.AppImage\` first"
+
+          # Create release on releases repo
+          gh release create "$TAG" \
+            --repo microblue/myclaw-desktop-releases \
+            --title "MyClaw.One ${TAG}" \
+            --notes "$BODY" \
+            $( [ "$TAG_IS_PRERELEASE" = "true" ] && echo "--prerelease" ) \
+            --verify-tag=false || true
+
+          # Upload all artifacts
+          find release-artifacts/ -type f \( \
+            -name "*.exe" -o -name "*.AppImage" -o \
+            -name "*.deb" -o -name "*.rpm" -o \
+            -name "*.dmg" -o -name "*.zip" -o \
+            -name "*.yml" \
+          \) | xargs gh release upload "$TAG" \
+            --repo microblue/myclaw-desktop-releases \
+            --clobber
+
+  # ──────────────────────────────────────────────────────────────
+  # Job: Finalize Release
+  # Promotes the GitHub Release from pre-release to latest AFTER
+  # both GitHub Release assets and OSS uploads are fully complete.
+  # This ensures /releases/latest API never returns an incomplete
+  # release — the website and electron-updater only see it when
+  # all platform artifacts are ready.
+  # ──────────────────────────────────────────────────────────────
+  finalize:
+    needs: [publish]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Promote release from pre-release to latest
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          IS_PRERELEASE_CHANNEL=false
+
+          if [[ "$TAG" == *"alpha"* ]] || [[ "$TAG" == *"beta"* ]]; then
+            IS_PRERELEASE_CHANNEL=true
+          fi
+
+          if [ "$IS_PRERELEASE_CHANNEL" = "true" ]; then
+            echo "Tag $TAG is an alpha/beta release — keeping as pre-release."
+          else
+            echo "Promoting $TAG from pre-release to latest release..."
+            gh release edit "$TAG" \
+              --prerelease=false \
+              --latest \
+              --repo "microblue/myclaw-desktop-releases"
+            echo "Release $TAG is now the latest release."
+          fi
