@@ -182,9 +182,13 @@ function bundleOnePlugin({ npmName, pluginId }) {
 }
 
 /**
- * Patch plugin entry JS files so the exported `id` matches openclaw.plugin.json.
- * Some plugins (e.g. wecom) ship with a hardcoded ID in their compiled output
- * that differs from the manifest, causing a Gateway "plugin id mismatch" error.
+ * Patch plugin ID so it matches expectedId everywhere:
+ *   1. openclaw.plugin.json  — the manifest the Gateway reads
+ *   2. compiled JS entry files — may hardcode the npm package name as the id
+ *
+ * Some npm packages (wecom, qqbot, lark …) ship with a different id than the
+ * one openclaw expects.  The Gateway validates manifest id == JS export id, so
+ * both must be corrected.
  */
 function patchPluginId(pluginDir, expectedId) {
   const manifestPath = path.join(pluginDir, 'openclaw.plugin.json');
@@ -192,45 +196,32 @@ function patchPluginId(pluginDir, expectedId) {
 
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   const manifestId = manifest.id;
-  if (manifestId !== expectedId) {
-    echo`   ⚠️  Manifest ID "${manifestId}" doesn't match expected "${expectedId}", skipping patch`;
-    return;
-  }
 
-  // Read the package.json to find the main entry point
+  if (manifestId === expectedId) return; // already correct, nothing to do
+
+  // 1) Patch openclaw.plugin.json
+  manifest.id = expectedId;
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+  echo`   🩹 Patched openclaw.plugin.json id: "${manifestId}" → "${expectedId}"`;
+
+  // 2) Patch compiled JS entry files that hardcode the old id
   const pkgJsonPath = path.join(pluginDir, 'package.json');
   if (!fs.existsSync(pkgJsonPath)) return;
 
   const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
   const entryFiles = [pkg.main, pkg.module].filter(Boolean);
 
-  // Known ID mismatches to patch.  Keys are the wrong ID found in compiled JS,
-  // values are the correct ID (must match openclaw.plugin.json).
-  const ID_FIXES = {
-    'wecom-openclaw-plugin': 'wecom',
-  };
-
   for (const entry of entryFiles) {
     const entryPath = path.join(pluginDir, entry);
     if (!fs.existsSync(entryPath)) continue;
 
-    let content = fs.readFileSync(entryPath, 'utf8');
-    let patched = false;
-
-    for (const [wrongId, correctId] of Object.entries(ID_FIXES)) {
-      if (correctId !== expectedId) continue;
-      // Replace  id: "wecom-openclaw-plugin"  or  id: 'wecom-openclaw-plugin'
-      const pattern = new RegExp(`(\\bid\\s*:\\s*)(["'])${wrongId.replace(/-/g, '\\-')}\\2`, 'g');
-      const replaced = content.replace(pattern, `$1$2${correctId}$2`);
-      if (replaced !== content) {
-        content = replaced;
-        patched = true;
-        echo`   🩹 Patching plugin ID in ${entry}: "${wrongId}" → "${correctId}"`;
-      }
-    }
-
-    if (patched) {
-      fs.writeFileSync(entryPath, content, 'utf8');
+    const original = fs.readFileSync(entryPath, 'utf8');
+    // Replace  id: "old-id"  or  id: 'old-id'
+    const pattern = new RegExp(`(\\bid\\s*:\\s*)(["'])${manifestId.replace(/[-]/g, '\\-')}\\2`, 'g');
+    const patched = original.replace(pattern, `$1$2${expectedId}$2`);
+    if (patched !== original) {
+      fs.writeFileSync(entryPath, patched, 'utf8');
+      echo`   🩹 Patched id in ${entry}: "${manifestId}" → "${expectedId}"`;
     }
   }
 }
