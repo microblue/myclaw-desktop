@@ -563,6 +563,29 @@ exports.default = async function afterPack(context) {
   cpSync(src, dest, { recursive: true });
   console.log('[after-pack] ✅ openclaw node_modules copied.');
 
+  // 1.2 Copy extension-level node_modules (also skipped by electron-builder due to .gitignore).
+  //     Each built-in extension (telegram, discord, slack, etc.) ships its own node_modules/
+  //     inside dist/extensions/<ext>/node_modules/. electron-builder skips ALL node_modules/
+  //     directories regardless of depth, so we must copy them manually here.
+  const buildExtDir = join(__dirname, '..', 'build', 'openclaw', 'dist', 'extensions');
+  const packedExtDir = join(openclawRoot, 'dist', 'extensions');
+  if (existsSync(buildExtDir)) {
+    let extNmCount = 0;
+    for (const extEntry of readdirSync(buildExtDir, { withFileTypes: true })) {
+      if (!extEntry.isDirectory()) continue;
+      const srcExtNm = join(buildExtDir, extEntry.name, 'node_modules');
+      const destExtNm = join(packedExtDir, extEntry.name, 'node_modules');
+      if (existsSync(srcExtNm)) {
+        cpSync(srcExtNm, destExtNm, { recursive: true });
+        extNmCount++;
+        console.log(`[after-pack]   ✓ ${extEntry.name}/node_modules`);
+      }
+    }
+    if (extNmCount > 0) {
+      console.log(`[after-pack] ✅ Copied node_modules for ${extNmCount} built-in extensions.`);
+    }
+  }
+
   // Patch broken modules whose CJS transpiled output sets module.exports = undefined,
   // causing TypeError in Node.js 22+ ESM interop.
   patchBrokenModules(dest);
