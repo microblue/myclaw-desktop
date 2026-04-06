@@ -306,13 +306,20 @@ export class WhatsAppLoginManager extends EventEmitter {
 
             this.socket.ev.on('creds.update', async () => {
                 await saveCreds();
-                if (connectionOpened && !credsReceived) {
+                if (!credsReceived) {
                     credsReceived = true;
-                    if (credsTimeout) clearTimeout(credsTimeout);
-                    console.log('[WhatsAppLogin] Credentials saved after connection open, finishing login...');
-                    // Small delay to ensure file writes are fully flushed
-                    await new Promise(resolve => setTimeout(resolve, 3000));
-                    await this.finishLogin(accountId);
+                    if (connectionOpened) {
+                        // Normal path: connection already open, finish login now
+                        if (credsTimeout) clearTimeout(credsTimeout);
+                        console.log('[WhatsAppLogin] Credentials saved after connection open, finishing login...');
+                        // Small delay to ensure file writes are fully flushed
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+                        await this.finishLogin(accountId);
+                    } else {
+                        // Creds arrived before connection.update('open') — the 'open' handler
+                        // will see credsReceived=true and finish login immediately without waiting.
+                        console.log('[WhatsAppLogin] Credentials saved before connection open, will finish on open.');
+                    }
                 }
             });
 
@@ -367,17 +374,25 @@ export class WhatsAppLoginManager extends EventEmitter {
                             this.emit('error', 'Logged out');
                         }
                     } else if (connection === 'open') {
-                        console.log('[WhatsAppLogin] Connection opened! Waiting for credentials to be saved...');
                         this.retryCount = 0;
                         connectionOpened = true;
 
-                        // Safety timeout: if creds don't update within 15s, proceed anyway
-                        credsTimeout = setTimeout(async () => {
-                            if (!credsReceived && this.active) {
-                                console.warn('[WhatsAppLogin] Timed out waiting for creds.update after connection open, proceeding...');
-                                await this.finishLogin(accountId);
-                            }
-                        }, 15000);
+                        if (credsReceived) {
+                            // creds.update fired before connection opened — finish immediately
+                            console.log('[WhatsAppLogin] Connection opened, credentials already saved, finishing login...');
+                            if (credsTimeout) clearTimeout(credsTimeout);
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                            await this.finishLogin(accountId);
+                        } else {
+                            console.log('[WhatsAppLogin] Connection opened! Waiting for credentials to be saved...');
+                            // Safety timeout: if creds don't update within 15s, proceed anyway
+                            credsTimeout = setTimeout(async () => {
+                                if (!credsReceived && this.active) {
+                                    console.warn('[WhatsAppLogin] Timed out waiting for creds.update after connection open, proceeding...');
+                                    await this.finishLogin(accountId);
+                                }
+                            }, 15000);
+                        }
                     }
                 } catch (innerErr) {
                     console.error('[WhatsAppLogin] Error in connection update:', innerErr);

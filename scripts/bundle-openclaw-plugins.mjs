@@ -36,11 +36,11 @@ function normWin(p) {
 }
 
 const PLUGINS = [
-  { npmName: '@soimy/dingtalk', pluginId: 'dingtalk' },
-  { npmName: '@wecom/wecom-openclaw-plugin', pluginId: 'wecom' },
-  { npmName: '@tencent-connect/openclaw-qqbot', pluginId: 'qqbot' },
-  { npmName: '@larksuite/openclaw-lark', pluginId: 'feishu-openclaw-plugin' },
-  { npmName: '@tencent-weixin/openclaw-weixin', pluginId: 'openclaw-weixin' },
+  { npmName: '@soimy/dingtalk',               pluginId: 'dingtalk',          dirName: 'dingtalk' },
+  { npmName: '@wecom/wecom-openclaw-plugin',   pluginId: 'wecom',             dirName: 'wecom' },
+  { npmName: '@tencent-connect/openclaw-qqbot',pluginId: 'openclaw-qqbot',    dirName: 'qqbot' },
+  { npmName: '@larksuite/openclaw-lark',       pluginId: 'openclaw-lark',     dirName: 'feishu-openclaw-plugin' },
+  { npmName: '@tencent-weixin/openclaw-weixin', pluginId: 'openclaw-weixin',  dirName: 'openclaw-weixin' },
 ];
 
 function getVirtualStoreNodeModules(realPkgPath) {
@@ -83,14 +83,14 @@ function listPackages(nodeModulesDir) {
   return result;
 }
 
-function bundleOnePlugin({ npmName, pluginId }) {
+function bundleOnePlugin({ npmName, pluginId, dirName }) {
   const pkgPath = path.join(NODE_MODULES, ...npmName.split('/'));
   if (!fs.existsSync(pkgPath)) {
     throw new Error(`Missing dependency "${npmName}". Run pnpm install first.`);
   }
 
   const realPluginPath = fs.realpathSync(pkgPath);
-  const outputDir = path.join(OUTPUT_ROOT, pluginId);
+  const outputDir = path.join(OUTPUT_ROOT, dirName ?? pluginId);
 
   echo`📦 Bundling plugin ${npmName} -> ${outputDir}`;
 
