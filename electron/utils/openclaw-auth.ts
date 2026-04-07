@@ -1587,6 +1587,7 @@ export async function sanitizeOpenClawConfig(): Promise<void> {
     {
       const discordSection = (config.channels as Record<string, unknown> | undefined)?.discord as Record<string, unknown> | undefined;
       const guilds = discordSection?.guilds as Record<string, Record<string, unknown>> | undefined;
+      let discordMigrated = false;
       if (guilds && typeof guilds === 'object') {
         for (const guild of Object.values(guilds)) {
           const channels = guild?.channels as Record<string, Record<string, unknown>> | undefined;
@@ -1595,11 +1596,12 @@ export async function sanitizeOpenClawConfig(): Promise<void> {
             if (ch && 'allow' in ch && !('enabled' in ch)) {
               ch.enabled = ch.allow;
               delete ch.allow;
-              modified = true;
+              discordMigrated = true;
             }
           }
         }
-        if (modified) {
+        if (discordMigrated) {
+          modified = true;
           console.log('[sanitize] Migrated discord guild channels: allow → enabled');
         }
       }

@@ -83,6 +83,7 @@ export function Settings() {
   const currentVersion = useUpdateStore((state) => state.currentVersion);
   const updateSetAutoDownload = useUpdateStore((state) => state.setAutoDownload);
   const [controlUiInfo, setControlUiInfo] = useState<ControlUiInfo | null>(null);
+  const [openclawVersion, setOpenclawVersion] = useState<string | null>(null);
   const [openclawCliCommand, setOpenclawCliCommand] = useState('');
   const [openclawCliError, setOpenclawCliError] = useState<string | null>(null);
   const [proxyServerDraft, setProxyServerDraft] = useState('');
@@ -229,6 +230,12 @@ export function Settings() {
       toast.error(`Failed to copy token: ${String(error)}`);
     }
   };
+
+  useEffect(() => {
+    invokeIpc<{ version?: string }>('openclaw:status').then((s) => {
+      if (s.version) setOpenclawVersion(s.version);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!showCliTools) return;
@@ -1086,28 +1093,19 @@ export function Settings() {
                 <strong className="text-foreground font-semibold">{t('about.appName')}</strong> - {t('about.tagline')}
               </p>
               <p>{t('about.basedOn')}</p>
-              <p>{t('about.version', { version: currentVersion })}</p>
+              <p>
+                {t('about.version', { version: currentVersion })}
+                {openclawVersion && (
+                  <span className="ml-3 text-muted-foreground/60">OpenClaw {openclawVersion}</span>
+                )}
+              </p>
               <div className="flex gap-4 pt-3">
-                <Button
-                  variant="link"
-                  className="h-auto p-0 text-[14px] text-blue-500 hover:text-blue-600 font-medium"
-                  onClick={() => window.electron.openExternal('https://claw-x.com')}
-                >
-                  {t('about.docs')}
-                </Button>
                 <Button
                   variant="link"
                   className="h-auto p-0 text-[14px] text-blue-500 hover:text-blue-600 font-medium"
                   onClick={() => window.electron.openExternal('https://github.com/microblue/myclaw-desktop')}
                 >
                   {t('about.github')}
-                </Button>
-                <Button
-                  variant="link"
-                  className="h-auto p-0 text-[14px] text-blue-500 hover:text-blue-600 font-medium"
-                  onClick={() => window.electron.openExternal('https://icnnp7d0dymg.feishu.cn/wiki/UyfOwQ2cAiJIP6kqUW8cte5Bnlc')}
-                >
-                  {t('about.faq')}
                 </Button>
               </div>
             </div>

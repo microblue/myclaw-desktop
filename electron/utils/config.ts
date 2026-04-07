@@ -14,10 +14,10 @@ export const PORTS = {
   MYCLAW_GUI: 23333,
 
   /** Local host API server port */
-  MYCLAW_HOST_API: 3210,
+  MYCLAW_HOST_API: 18888,
   
   /** OpenClaw Gateway port */
-  OPENCLAW_GATEWAY: 18789,
+  OPENCLAW_GATEWAY: 17777,
 } as const;
 
 /**

@@ -135,9 +135,9 @@ export function getOpenClawDir(): string {
     return join(process.resourcesPath, 'openclaw');
   }
   // Development: prefer build/openclaw (has bundled deps like grammy, @buape/carbon);
-  // fall back to node_modules/openclaw if build hasn't run yet.
+  // fall back to node_modules/openclaw if build hasn't run yet or is incomplete.
   const buildDir = join(__dirname, '../../build/openclaw');
-  if (existsSync(buildDir)) {
+  if (existsSync(buildDir) && (existsSync(join(buildDir, 'openclaw.mjs')) || existsSync(join(buildDir, 'dist', 'entry.js')))) {
     return buildDir;
   }
   return join(__dirname, '../../node_modules/openclaw');
