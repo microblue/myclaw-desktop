@@ -307,7 +307,9 @@ for (const [realPath, pkgName] of collected) {
             fs.mkdirSync(normWin(path.dirname(dest)), { recursive: true });
             fs.cpSync(normWin(src), normWin(dest), { recursive: true, dereference: true });
             promotedCount++;
-          } catch { /* skip */ }
+          } catch (err) {
+            echo`   ⚠️  Failed to promote ${pkgName}: ${err.message}`;
+          }
         }
       }
     }

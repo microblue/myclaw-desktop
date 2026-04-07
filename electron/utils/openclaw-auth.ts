@@ -1581,6 +1581,30 @@ export async function sanitizeOpenClawConfig(): Promise<void> {
       }
     }
 
+    // ── Discord guild channels: allow → enabled migration ───────────
+    // openclaw 2026.4.5 renamed channels.discord.guilds.<id>.channels.<id>.allow
+    // to .enabled. The old field causes config validation failure on startup.
+    {
+      const discordSection = (config.channels as Record<string, unknown> | undefined)?.discord as Record<string, unknown> | undefined;
+      const guilds = discordSection?.guilds as Record<string, Record<string, unknown>> | undefined;
+      if (guilds && typeof guilds === 'object') {
+        for (const guild of Object.values(guilds)) {
+          const channels = guild?.channels as Record<string, Record<string, unknown>> | undefined;
+          if (!channels || typeof channels !== 'object') continue;
+          for (const ch of Object.values(channels)) {
+            if (ch && 'allow' in ch && !('enabled' in ch)) {
+              ch.enabled = ch.allow;
+              delete ch.allow;
+              modified = true;
+            }
+          }
+        }
+        if (modified) {
+          console.log('[sanitize] Migrated discord guild channels: allow → enabled');
+        }
+      }
+    }
+
     if (modified) {
       await writeOpenClawJson(config);
       console.log('[sanitize] openclaw.json sanitized successfully');
