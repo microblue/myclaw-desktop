@@ -393,6 +393,119 @@ describe('sanitizeOpenClawConfig', () => {
 
     logSpy.mockRestore();
   });
+
+  it('migrates discord guild channel allow→enabled (openclaw 2026.4.5 breaking change)', async () => {
+    // openclaw 2026.4.5 renamed channels.discord.guilds.<id>.channels.<id>.allow to .enabled
+    await writeOpenClawJson({
+      channels: {
+        discord: {
+          token: 'tok',
+          guilds: {
+            'guild-1': {
+              channels: {
+                'ch-a': { allow: true, name: 'general' },
+                'ch-b': { allow: false, name: 'private' },
+                'ch-c': { enabled: true, name: 'already-migrated' }, // should not be touched
+              },
+            },
+            'guild-2': {
+              channels: {
+                'ch-d': { allow: true, name: 'announcements' },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const { sanitizeOpenClawConfig } = await import('@electron/utils/openclaw-auth');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await sanitizeOpenClawConfig();
+
+    const configPath = join(testHome, '.openclaw', 'openclaw.json');
+    const result = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>;
+    const discord = (result.channels as Record<string, unknown>).discord as Record<string, unknown>;
+    const guilds = discord.guilds as Record<string, Record<string, unknown>>;
+
+    // allow → enabled for unmigrated channels
+    const g1 = guilds['guild-1'].channels as Record<string, Record<string, unknown>>;
+    expect(g1['ch-a']).toEqual({ enabled: true, name: 'general' });
+    expect(g1['ch-b']).toEqual({ enabled: false, name: 'private' });
+    // already-migrated channel untouched
+    expect(g1['ch-c']).toEqual({ enabled: true, name: 'already-migrated' });
+
+    const g2 = guilds['guild-2'].channels as Record<string, Record<string, unknown>>;
+    expect(g2['ch-d']).toEqual({ enabled: true, name: 'announcements' });
+
+    // old field removed
+    expect(g1['ch-a']).not.toHaveProperty('allow');
+    expect(g1['ch-b']).not.toHaveProperty('allow');
+    expect(g2['ch-d']).not.toHaveProperty('allow');
+
+    // migration log printed exactly once
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining('allow → enabled'),
+    );
+
+    logSpy.mockRestore();
+  });
+
+  it('does not print discord migration log when no channels need migration', async () => {
+    // If config has no discord guilds with allow fields, the log must not appear
+    await writeOpenClawJson({
+      channels: {
+        discord: {
+          token: 'tok',
+          guilds: {
+            'guild-1': {
+              channels: {
+                'ch-a': { enabled: true, name: 'general' }, // already correct
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const { sanitizeOpenClawConfig } = await import('@electron/utils/openclaw-auth');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await sanitizeOpenClawConfig();
+
+    expect(logSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining('allow → enabled'),
+    );
+
+    logSpy.mockRestore();
+  });
+
+  it('does not modify config when discord section has no guilds', async () => {
+    // Telegram-only config — discord section exists but no guilds
+    await writeOpenClawJson({
+      channels: {
+        telegram: { token: 'tg-tok' },
+        discord: { token: 'dc-tok' },
+      },
+    });
+
+    const { sanitizeOpenClawConfig } = await import('@electron/utils/openclaw-auth');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await sanitizeOpenClawConfig();
+
+    const configPath = join(testHome, '.openclaw', 'openclaw.json');
+    const result = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>;
+    const channels = result.channels as Record<string, unknown>;
+    expect(channels.telegram).toEqual({ token: 'tg-tok' });
+    expect((channels.discord as Record<string, unknown>).token).toBe('dc-tok');
+
+    expect(logSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining('allow → enabled'),
+    );
+
+    logSpy.mockRestore();
+  });
 });
 
 describe('auth-backed provider discovery', () => {
