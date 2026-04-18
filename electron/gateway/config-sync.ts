@@ -21,7 +21,7 @@ import { getProviderEnvVar, getKeyableProviderTypes } from '../utils/provider-re
 import { getOpenClawDir, getOpenClawEntryPath, isOpenClawPresent } from '../utils/paths';
 import { getUvMirrorEnv } from '../utils/uv-env';
 import { cleanupDanglingWeChatPluginState, listConfiguredChannels, readOpenClawConfig } from '../utils/channel-config';
-import { syncGatewayTokenToConfig, syncBrowserConfigToOpenClaw, syncSessionIdleMinutesToOpenClaw, sanitizeOpenClawConfig } from '../utils/openclaw-auth';
+import { syncGatewayTokenToConfig, syncBrowserConfigToOpenClaw, syncSessionIdleMinutesToOpenClaw, syncMdnsDiscoveryToOpenClaw, sanitizeOpenClawConfig } from '../utils/openclaw-auth';
 import { buildProxyEnv, resolveProxySettings } from '../utils/proxy';
 import { syncProxyConfigToOpenClaw } from '../utils/openclaw-proxy';
 import { logger } from '../utils/logger';
@@ -245,6 +245,12 @@ export async function syncGatewayConfigBeforeLaunch(
   } catch (err) {
     logger.warn('Failed to sync session idle minutes to openclaw.json:', err);
   }
+
+  try {
+    await syncMdnsDiscoveryToOpenClaw();
+  } catch (err) {
+    logger.warn('Failed to sync mDNS discovery mode to openclaw.json:', err);
+  }
 }
 
 async function loadProviderEnv(): Promise<{ providerEnv: Record<string, string>; loadedProviderKeyCount: number }> {
@@ -363,6 +369,11 @@ export async function prepareGatewayLaunchContext(port: number): Promise<Gateway
     OPENCLAW_SKIP_CHANNELS: skipChannels ? '1' : '',
     CLAWDBOT_SKIP_CHANNELS: skipChannels ? '1' : '',
     OPENCLAW_NO_RESPAWN: '1',
+    // Desktop connects to the Gateway via ws://127.0.0.1, so LAN mDNS/Bonjour
+    // advertising has no value here and, on Windows, its probing can stall the
+    // Gateway boot loop (Apple Bonjour Service / VPN / Hyper-V multicast
+    // conflicts). Keep it off unless a future setting explicitly re-enables it.
+    OPENCLAW_DISABLE_BONJOUR: '1',
   };
 
   return {

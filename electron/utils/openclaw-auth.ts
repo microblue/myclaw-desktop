@@ -1055,6 +1055,45 @@ export async function syncBrowserConfigToOpenClaw(): Promise<void> {
 }
 
 /**
+ * Force `discovery.mdns.mode = "off"` unless the user (or a future MyClaw UI)
+ * has explicitly written another value.  OpenClaw defaults mdns mode to
+ * `"minimal"`, which starts a Bonjour/ciao advertiser on 5353/UDP.  On Windows
+ * that advertiser is a common source of Gateway boot stalls (Apple Bonjour
+ * Service, corporate VPNs, or Hyper-V/WSL2 virtual interfaces leave the service
+ * stuck in `probing` for 90s+ and drag the handshake down with it).  Desktop
+ * clients connect to the Gateway via `ws://127.0.0.1`, so LAN advertising is
+ * pure overhead here.  Pairs with the `OPENCLAW_DISABLE_BONJOUR=1` env var
+ * injected by the Gateway launcher as a belt-and-suspenders fallback.
+ */
+export async function syncMdnsDiscoveryToOpenClaw(): Promise<void> {
+  return withConfigLock(async () => {
+    const config = await readOpenClawJson();
+
+    const discovery = (
+      config.discovery && typeof config.discovery === 'object'
+        ? { ...(config.discovery as Record<string, unknown>) }
+        : {}
+    ) as Record<string, unknown>;
+
+    const mdns = (
+      discovery.mdns && typeof discovery.mdns === 'object'
+        ? { ...(discovery.mdns as Record<string, unknown>) }
+        : {}
+    ) as Record<string, unknown>;
+
+    // Respect any explicit choice already in the file — only fill the default.
+    if (mdns.mode !== undefined) return;
+
+    mdns.mode = 'off';
+    discovery.mdns = mdns;
+    config.discovery = discovery;
+
+    await writeOpenClawJson(config);
+    console.log('Synced discovery.mdns.mode="off" to openclaw.json');
+  });
+}
+
+/**
  * Ensure session idle-reset is configured in ~/.openclaw/openclaw.json.
  *
  * By default OpenClaw resets the "main" session daily at 04:00 local time,
