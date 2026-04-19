@@ -37,6 +37,7 @@ export interface AppSettings {
   gatewayAutoStart: boolean;
   gatewayPort: number;
   gatewayToken: string;
+  preventSleep: boolean;
   proxyEnabled: boolean;
   proxyServer: string;
   proxyHttpServer: string;
@@ -88,6 +89,7 @@ function createDefaultSettings(): AppSettings {
     gatewayAutoStart: true,
     gatewayPort: 18789,
     gatewayToken: generateToken(),
+    preventSleep: false,
     proxyEnabled: false,
     proxyServer: '',
     proxyHttpServer: '',

@@ -65,6 +65,14 @@ build/
 artifacts/
 docs/pr-session-notes-*.md
 
+# Agent-generated session logs (written by the Discord-channel agent bot;
+# captures conversations in this repo for its own memory, not project history)
+memory/
+
+# Local planning / bootstrap notes (keep in working copy, don't ship upstream)
+PLAN_*.md
+PROJECT_BOOTSTRAP.md
+
 .cursor/
 .pnpm-store/
 package-lock.json

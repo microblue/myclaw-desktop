@@ -2,7 +2,7 @@
  * Electron Main Process Entry
  * Manages window creation, system tray, and IPC handlers
  */
-import { app, BrowserWindow, nativeImage, session, shell } from 'electron';
+import { app, BrowserWindow, nativeImage, powerMonitor, powerSaveBlocker, session, shell } from 'electron';
 import type { Server } from 'node:http';
 import { join } from 'path';
 import { GatewayManager } from '../gateway/manager';
@@ -120,6 +120,7 @@ let gatewayManager!: GatewayManager;
 let clawHubService!: ClawHubService;
 let hostEventBus!: HostEventBus;
 let hostApiServer: Server | null = null;
+let powerBlockerId: number | null = null;
 const mainWindowFocusState = createMainWindowFocusState();
 const quitLifecycleState = createQuitLifecycleState();
 
@@ -446,6 +447,30 @@ async function initialize(): Promise<void> {
     hostEventBus.emit('channel:whatsapp-error', error);
   });
 
+  // Opt-in: prevent the OS from sleeping while MyClaw is running.  Off by
+  // default because it's user-hostile (drains laptop batteries).  Users who
+  // run long-lived channels/agents can enable it from the settings UI.
+  if (!isE2EMode) {
+    const preventSleep = await getSetting('preventSleep');
+    if (preventSleep) {
+      powerBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+      logger.info(`[Power] Sleep prevention started (blockerId=${powerBlockerId})`);
+    }
+
+    // Gateway WebSocket state often rots across suspend/resume even when the
+    // underlying process is healthy (Windows TCP stack closes sockets silently,
+    // or the Bonjour/ciao loop comes back in a bad state).  On resume, check
+    // the socket and reconnect if needed.  This is cheap when the gateway is
+    // already healthy (isConnected returns true → no-op).
+    powerMonitor.on('resume', () => {
+      if (gatewayManager.isConnected()) return;
+      logger.info('[Power] System resumed with disconnected Gateway; restarting');
+      void gatewayManager.restart().catch((error) => {
+        logger.warn('[Power] Gateway restart after resume failed:', error);
+      });
+    });
+  }
+
   // Start Gateway automatically (this seeds missing bootstrap files with full templates)
   const gatewayAutoStart = await getSetting('gatewayAutoStart');
   if (!isE2EMode && gatewayAutoStart) {
@@ -564,6 +589,15 @@ if (gotTheLock) {
     if (action === 'cleanup-in-progress') {
       logger.debug('Quit requested while cleanup already in progress; waiting for shutdown task to finish');
       return;
+    }
+
+    if (powerBlockerId !== null) {
+      try {
+        powerSaveBlocker.stop(powerBlockerId);
+      } catch (err) {
+        logger.debug('[Power] Failed to stop power blocker on quit:', err);
+      }
+      powerBlockerId = null;
     }
 
     hostEventBus.closeAll();
