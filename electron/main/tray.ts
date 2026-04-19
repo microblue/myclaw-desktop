@@ -4,6 +4,7 @@
  */
 import { Tray, Menu, BrowserWindow, app, nativeImage } from 'electron';
 import { join } from 'path';
+import { showAutoLoginHintDialog } from './auto-login-hint';
 
 let tray: Tray | null = null;
 
@@ -111,6 +112,17 @@ export function createTray(mainWindow: BrowserWindow): Tray {
     {
       type: 'separator',
     },
+    ...(process.platform === 'win32'
+      ? [
+          {
+            label: '配置开机自动启动...',
+            click: () => {
+              void showAutoLoginHintDialog(mainWindow.isDestroyed() ? undefined : mainWindow);
+            },
+          } as Electron.MenuItemConstructorOptions,
+          { type: 'separator' as const },
+        ]
+      : []),
     {
       label: 'Check for Updates...',
       click: () => {

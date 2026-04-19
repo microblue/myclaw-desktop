@@ -21,6 +21,7 @@ import { autoInstallCliIfNeeded, generateCompletionCache, installCompletionToPro
 import { isQuitting, setQuitting } from './app-state';
 import { applyProxySettings } from './proxy';
 import { syncLaunchAtStartupSettingFromStore } from './launch-at-startup';
+import { maybeShowAutoLoginHintOnce } from './auto-login-hint';
 import {
   clearPendingSecondInstanceFocus,
   consumeMainWindowReady,
@@ -479,6 +480,9 @@ async function initialize(): Promise<void> {
       logger.debug('Auto-starting Gateway...');
       await gatewayManager.start();
       logger.info('Gateway auto-start succeeded');
+      void maybeShowAutoLoginHintOnce(mainWindow ?? undefined).catch((err) => {
+        logger.warn('[AutoLoginHint] failed:', err);
+      });
     } catch (error) {
       logger.error('Gateway auto-start failed:', error);
       mainWindow?.webContents.send('gateway:error', String(error));
