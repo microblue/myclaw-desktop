@@ -59,11 +59,15 @@ test.describe('Chat end-to-end with OpenRouter', () => {
     await expect(input).toBeVisible();
     await expect(input).toBeEnabled({ timeout: 180_000 });
 
-    await input.fill('Reply with exactly one word: ok');
+    // Prompt must actively discourage tool use. openclaw's default agent
+    // exposes tools, and without this the model sometimes decides to call
+    // them even for trivial prompts, turning a 2s chat into a multi-minute
+    // tool-processing loop that has no chat-message-assistant DOM node yet.
+    await input.fill('Please reply with only the single word "ok". Do not use any tools, do not think, do not elaborate.');
     await page.getByTestId('chat-send-button').click();
 
     const assistantMessage = page.getByTestId('chat-message-assistant').first();
-    await expect(assistantMessage).toBeVisible({ timeout: 180_000 });
+    await expect(assistantMessage).toBeVisible({ timeout: 300_000 });
     await expect(assistantMessage).not.toBeEmpty();
 
     const text = (await assistantMessage.textContent())?.trim() ?? '';
