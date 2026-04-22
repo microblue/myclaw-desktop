@@ -35,7 +35,6 @@ import {
 import { toOpenClawChannelType, toUiChannelType } from '../utils/channel-alias';
 import { checkUvInstalled, installUv, setupManagedPython } from '../utils/uv-setup';
 import {
-  ensureDingTalkPluginInstalled,
   ensureFeishuPluginInstalled,
   ensureQQBotPluginInstalled,
   ensureWeComPluginInstalled,
@@ -1388,7 +1387,7 @@ function registerOpenClawHandlers(gatewayManager: GatewayManager): void {
   // Plugin-based channels require a full Gateway process restart to properly
   // initialize / tear-down plugin connections.  SIGUSR1 in-process reload is
   // not sufficient for channel plugins (see restartGatewayForAgentDeletion).
-  const forceRestartChannels = new Set(['dingtalk', 'wecom', 'whatsapp', 'feishu', 'qqbot']);
+  const forceRestartChannels = new Set(['wecom', 'whatsapp', 'feishu', 'qqbot']);
 
   const scheduleGatewayChannelRestart = (reason: string): void => {
     if (gatewayManager.getStatus().state !== 'stopped') {
@@ -1466,22 +1465,6 @@ function registerOpenClawHandlers(gatewayManager: GatewayManager): void {
   ipcMain.handle('channel:saveConfig', async (_, channelType: string, config: Record<string, unknown>) => {
     try {
       logger.info('channel:saveConfig', { channelType, keys: Object.keys(config || {}) });
-      if (channelType === 'dingtalk') {
-        const installResult = await ensureDingTalkPluginInstalled();
-        if (!installResult.installed) {
-          return {
-            success: false,
-            error: installResult.warning || 'DingTalk plugin install failed',
-          };
-        }
-        await saveChannelConfig(channelType, config);
-        scheduleGatewayChannelSaveRefresh(channelType, `channel:saveConfig (${channelType})`);
-        return {
-          success: true,
-          pluginInstalled: installResult.installed,
-          warning: installResult.warning,
-        };
-      }
       if (channelType === 'wecom') {
         const installResult = await ensureWeComPluginInstalled();
         if (!installResult.installed) {

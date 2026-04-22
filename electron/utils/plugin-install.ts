@@ -2,7 +2,7 @@
  * Shared OpenClaw Plugin Install Utilities
  *
  * Provides version-aware install/upgrade logic for bundled OpenClaw plugins
- * (DingTalk, WeCom, QQBot, Feishu, WeChat).  Used both at app startup (to auto-upgrade
+ * (WeCom, QQBot, Feishu, WeChat).  Used both at app startup (to auto-upgrade
  * stale plugins) and when a user configures a channel.
  */
 import { app } from 'electron';
@@ -228,7 +228,6 @@ function patchPluginEntryIds(targetDir: string): void {
 // ── Plugin npm name mapping ──────────────────────────────────────────────────
 
 const PLUGIN_NPM_NAMES: Record<string, string> = {
-  dingtalk: '@soimy/dingtalk',
   wecom: '@wecom/wecom-openclaw-plugin',
   'feishu-openclaw-plugin': '@larksuite/openclaw-lark',
   qqbot: '@tencent-connect/openclaw-qqbot',
@@ -492,10 +491,6 @@ export function buildCandidateSources(pluginDirName: string): string[] {
 
 // ── Per-channel plugin helpers ───────────────────────────────────────────────
 
-export function ensureDingTalkPluginInstalled(): { installed: boolean; warning?: string } {
-  return ensurePluginInstalled('dingtalk', buildCandidateSources('dingtalk'), 'DingTalk');
-}
-
 export function ensureWeComPluginInstalled(): { installed: boolean; warning?: string } {
   return ensurePluginInstalled('wecom', buildCandidateSources('wecom'), 'WeCom');
 }
@@ -522,7 +517,6 @@ export function ensureWeChatPluginInstalled(): { installed: boolean; warning?: s
  * All bundled plugins, in the same order as after-pack.cjs BUNDLED_PLUGINS.
  */
 const ALL_BUNDLED_PLUGINS = [
-  { fn: ensureDingTalkPluginInstalled, label: 'DingTalk' },
   { fn: ensureWeComPluginInstalled, label: 'WeCom' },
   { fn: ensureQQBotPluginInstalled, label: 'QQ Bot' },
   { fn: ensureFeishuPluginInstalled, label: 'Feishu' },

@@ -35,7 +35,6 @@ vi.mock('@electron/utils/agent-config', () => ({
 }));
 
 vi.mock('@electron/utils/plugin-install', () => ({
-  ensureDingTalkPluginInstalled: vi.fn(),
   ensureFeishuPluginInstalled: vi.fn(),
   ensureQQBotPluginInstalled: vi.fn(),
   ensureWeChatPluginInstalled: vi.fn(),
@@ -493,58 +492,6 @@ describe('handleChannelRoutes', () => {
           expect.objectContaining({ value: 'wecom:chat-bravo', kind: 'group' }),
           expect.objectContaining({ value: 'wecom:chat-alpha', kind: 'channel' }),
         ]),
-      }),
-    );
-  });
-
-  it('lists DingTalk targets from session history', async () => {
-    mkdirSync(join(testOpenClawConfigDir, 'agents', 'main', 'sessions'), { recursive: true });
-    writeFileSync(
-      join(testOpenClawConfigDir, 'agents', 'main', 'sessions', 'sessions.json'),
-      JSON.stringify({
-        'agent:main:dingtalk:cid-group': {
-          updatedAt: 300,
-          chatType: 'group',
-          displayName: 'DingTalk Dev Group',
-          deliveryContext: {
-            channel: 'dingtalk',
-            accountId: 'default',
-            to: 'cidDeVGroup=',
-          },
-        },
-      }),
-      'utf8',
-    );
-
-    const { handleChannelRoutes } = await import('@electron/api/routes/channels');
-    const handled = await handleChannelRoutes(
-      { method: 'GET' } as IncomingMessage,
-      {} as ServerResponse,
-      new URL('http://127.0.0.1:3210/api/channels/targets?channelType=dingtalk&accountId=default'),
-      {
-        gatewayManager: {
-          rpc: vi.fn(),
-          getStatus: () => ({ state: 'running' }),
-          debouncedReload: vi.fn(),
-          debouncedRestart: vi.fn(),
-        },
-      } as never,
-    );
-
-    expect(handled).toBe(true);
-    expect(sendJsonMock).toHaveBeenCalledWith(
-      expect.anything(),
-      200,
-      expect.objectContaining({
-        success: true,
-        channelType: 'dingtalk',
-        accountId: 'default',
-        targets: [
-          expect.objectContaining({
-            value: 'cidDeVGroup=',
-            kind: 'group',
-          }),
-        ],
       }),
     );
   });

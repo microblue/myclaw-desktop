@@ -56,7 +56,6 @@ const BUILTIN_CHANNEL_IDS = new Set([
 const CHANNEL_UNIQUE_CREDENTIAL_KEY: Record<string, string> = {
     feishu: 'appId',
     wecom: 'botId',
-    dingtalk: 'clientId',
     telegram: 'botToken',
     discord: 'token',
     qqbot: 'appId',
@@ -416,20 +415,6 @@ async function ensurePluginAllowlist(currentConfig: OpenClawConfig, channelType:
                 currentConfig.plugins.entries[feishuPluginId] = {};
             }
             currentConfig.plugins.entries[feishuPluginId].enabled = true;
-        }
-    }
-
-    if (channelType === 'dingtalk') {
-        if (!currentConfig.plugins) {
-            currentConfig.plugins = { allow: ['dingtalk'], enabled: true };
-        } else {
-            currentConfig.plugins.enabled = true;
-            const allow: string[] = Array.isArray(currentConfig.plugins.allow)
-                ? (currentConfig.plugins.allow as string[])
-                : [];
-            if (!allow.includes('dingtalk')) {
-                currentConfig.plugins.allow = [...allow, 'dingtalk'];
-            }
         }
     }
 

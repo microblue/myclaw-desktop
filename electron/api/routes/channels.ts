@@ -22,7 +22,6 @@ import {
   listAgentsSnapshot,
 } from '../../utils/agent-config';
 import {
-  ensureDingTalkPluginInstalled,
   ensureFeishuPluginInstalled,
   ensureQQBotPluginInstalled,
   ensureWeChatPluginInstalled,
@@ -199,7 +198,7 @@ function scheduleGatewayChannelRestart(ctx: HostApiContext, reason: string): voi
 // channel type.  All channel config saves must trigger a full Gateway process
 // restart to ensure the channel adapter properly initializes with the new config.
 const FORCE_RESTART_CHANNELS = new Set([
-  'dingtalk', 'wecom', 'whatsapp', 'feishu', 'qqbot', OPENCLAW_WECHAT_CHANNEL_TYPE,
+  'wecom', 'whatsapp', 'feishu', 'qqbot', OPENCLAW_WECHAT_CHANNEL_TYPE,
   'discord', 'telegram', 'signal', 'imessage', 'matrix', 'line', 'msteams', 'googlechat', 'mattermost',
 ]);
 
@@ -548,7 +547,7 @@ function inferTargetKindFromValue(
   if (normalizedChatType === 'channel') return 'channel';
   if (target.startsWith('chat:') || target.includes(':group:')) return 'group';
   if (target.includes(':channel:')) return 'channel';
-  if (channelType === 'dingtalk' && target.startsWith('cid')) return 'group';
+  void channelType;
   return 'user';
 }
 
@@ -882,10 +881,6 @@ async function listWeComTargetOptions(accountId?: string, query?: string): Promi
   return mergeTargetOptions(sessionTargets, reqIdTargets);
 }
 
-async function listDingTalkTargetOptions(accountId?: string, query?: string): Promise<ChannelTargetOptionView[]> {
-  return await listSessionDerivedTargetOptions({ channelType: 'dingtalk', accountId, query });
-}
-
 async function listWeChatTargetOptions(accountId?: string, query?: string): Promise<ChannelTargetOptionView[]> {
   return await listSessionDerivedTargetOptions({ channelType: OPENCLAW_WECHAT_CHANNEL_TYPE, accountId, query });
 }
@@ -980,9 +975,6 @@ async function listChannelTargetOptions(params: {
     }
     if (storedChannelType === 'wecom') {
       return await listWeComTargetOptions(params.accountId, params.query);
-    }
-    if (storedChannelType === 'dingtalk') {
-      return await listDingTalkTargetOptions(params.accountId, params.query);
     }
     if (storedChannelType === OPENCLAW_WECHAT_CHANNEL_TYPE) {
       return await listWeChatTargetOptions(params.accountId, params.query);
@@ -1184,13 +1176,6 @@ export async function handleChannelRoutes(
     try {
       const body = await parseJsonBody<{ channelType: string; config: Record<string, unknown>; accountId?: string }>(req);
       const storedChannelType = resolveStoredChannelType(body.channelType);
-      if (storedChannelType === 'dingtalk') {
-        const installResult = await ensureDingTalkPluginInstalled();
-        if (!installResult.installed) {
-          sendJson(res, 500, { success: false, error: installResult.warning || 'DingTalk plugin install failed' });
-          return true;
-        }
-      }
       if (storedChannelType === 'wecom') {
         const installResult = await ensureWeComPluginInstalled();
         if (!installResult.installed) {

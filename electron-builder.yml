@@ -29,8 +29,8 @@ extraResources:
   # Pre-bundled third-party skills (full directories, not only SKILL.md)
   - from: build/preinstalled-skills/
     to: resources/preinstalled-skills/
-  # NOTE: OpenClaw plugin mirrors (dingtalk, etc.) are bundled by the
-  # afterPack hook (after-pack.cjs) directly from node_modules, so they
+  # NOTE: OpenClaw plugin mirrors (wecom, qqbot, feishu, wechat) are bundled by
+  # the afterPack hook (after-pack.cjs) directly from node_modules, so they
   # don't need an extraResources entry here.
 
 afterPack: ./scripts/after-pack.cjs
