@@ -98,21 +98,22 @@ jobs:
       - name: Wait for Gateway port 18789
         shell: pwsh
         run: |
-          $deadline = (Get-Date).AddSeconds(180)
+          $totalWaitSec = 360
+          $start = Get-Date
+          $deadline = $start.AddSeconds($totalWaitSec)
           $found = $false
           while ((Get-Date) -lt $deadline) {
             $conn = Get-NetTCPConnection -LocalPort 18789 -State Listen -ErrorAction SilentlyContinue
             if ($conn) {
+              $elapsed = [int]((Get-Date) - $start).TotalSeconds
+              Write-Host "Gateway listening on 18789 (PID $($conn[0].OwningProcess)) after ${elapsed}s"
               $found = $true
-              Write-Host "Gateway listening on 18789 (PID $($conn[0].OwningProcess)) after $([int]((Get-Date) - $deadline.AddSeconds(-180)).TotalSeconds)s"
               break
             }
-            Start-Sleep -Seconds 2
+            Start-Sleep -Seconds 3
           }
           if (-not $found) {
-            Write-Host "Gateway did not start listening within 180s; dumping process list:"
-            Get-Process | Where-Object { $_.ProcessName -match "MyClaw|openclaw|node" } | Format-Table
-            throw "gateway port 18789 is not listening post-install"
+            throw "gateway port 18789 is not listening after ${totalWaitSec}s"
           }
 
       - name: Probe Gateway HTTP
@@ -130,14 +131,40 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          Write-Host "--- Processes ---"
-          Get-Process | Where-Object { $_.ProcessName -match "MyClaw|openclaw|node" } | Format-Table
-          Write-Host "--- TCP 18789 ---"
-          Get-NetTCPConnection -LocalPort 18789 -ErrorAction SilentlyContinue | Format-Table
-          $logDir = "$env:APPDATA\MyClaw.One\logs"
-          if (Test-Path $logDir) {
-            Write-Host "--- Log dir: $logDir ---"
-            Get-ChildItem $logDir -Recurse | Select-Object -First 20 | Format-Table Name, Length
+          Write-Host "=== Processes (MyClaw/openclaw/node) ==="
+          Get-Process | Where-Object { $_.ProcessName -match "MyClaw|openclaw|node" } | Format-Table Id, ProcessName, CPU, WS
+
+          Write-Host "`n=== Command lines ==="
+          try {
+            Get-CimInstance Win32_Process | Where-Object { $_.Name -match "MyClaw|openclaw|node" } | ForEach-Object {
+              Write-Host "PID $($_.ProcessId) [$($_.Name)]"
+              Write-Host "  $($_.CommandLine)"
+            }
+          } catch { Write-Host "CIM query failed: $_" }
+
+          Write-Host "`n=== TCP listeners near 18789 ==="
+          Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+            Where-Object { $_.LocalPort -ge 18000 -and $_.LocalPort -le 19999 } |
+            Format-Table LocalAddress, LocalPort, OwningProcess
+
+          $candidates = @(
+            "$env:APPDATA\MyClaw.One\logs",
+            "$env:LOCALAPPDATA\MyClaw.One\logs",
+            "$env:USERPROFILE\.openclaw\logs",
+            "$env:USERPROFILE\.openclaw"
+          )
+          foreach ($dir in $candidates) {
+            if (Test-Path $dir) {
+              Write-Host "`n=== Log dir: $dir ==="
+              Get-ChildItem $dir -Recurse -ErrorAction SilentlyContinue | Select-Object -First 30 |
+                Format-Table FullName, Length
+              $latestMyclaw = Get-ChildItem $dir -Filter "myclaw-*.log" -Recurse -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending | Select-Object -First 1
+              if ($latestMyclaw) {
+                Write-Host "`n=== Tail of $($latestMyclaw.FullName) ==="
+                Get-Content $latestMyclaw.FullName -Tail 200
+              }
+            }
           }
 
       - name: Stop MyClaw processes

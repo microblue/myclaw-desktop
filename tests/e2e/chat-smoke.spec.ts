@@ -6,6 +6,10 @@ test.describe('Chat end-to-end with OpenRouter', () => {
     'OPENROUTER_TEST_API_KEY not configured — skipping live-LLM smoke',
   );
 
+  // Windows cold-start (antivirus scan + openclaw agent bootstrap) is the
+  // pacing factor; the default 90s per-test budget isn't enough.
+  test.setTimeout(600_000);
+
   test('seeds OpenRouter provider, starts gateway, sends message, renders assistant response', async ({
     page,
   }) => {
@@ -44,20 +48,22 @@ test.describe('Chat end-to-end with OpenRouter', () => {
         return status?.state === 'running';
       },
       undefined,
-      { timeout: 90_000 },
+      { timeout: 180_000 },
     );
 
     await page.getByTestId('sidebar-new-chat').click();
 
+    // On Windows, cold-start antivirus scans + openclaw agent loading can keep
+    // the renderer's gateway-status store stale well after main reports running.
     const input = page.getByTestId('chat-input-textarea');
     await expect(input).toBeVisible();
-    await expect(input).toBeEnabled({ timeout: 60_000 });
+    await expect(input).toBeEnabled({ timeout: 180_000 });
 
     await input.fill('Reply with exactly one word: ok');
     await page.getByTestId('chat-send-button').click();
 
     const assistantMessage = page.getByTestId('chat-message-assistant').first();
-    await expect(assistantMessage).toBeVisible({ timeout: 120_000 });
+    await expect(assistantMessage).toBeVisible({ timeout: 180_000 });
     await expect(assistantMessage).not.toBeEmpty();
 
     const text = (await assistantMessage.textContent())?.trim() ?? '';
