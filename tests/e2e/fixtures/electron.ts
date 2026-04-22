@@ -57,6 +57,9 @@ async function launchMyClawElectron(homeDir: string, userDataDir: string): Promi
       MYCLAW_E2E: '1',
       MYCLAW_USER_DATA_DIR: userDataDir,
       MYCLAW_PORT_MYCLAW_HOST_API: String(hostApiPort),
+      ...(process.env.OPENROUTER_TEST_API_KEY
+        ? { OPENROUTER_TEST_API_KEY: process.env.OPENROUTER_TEST_API_KEY }
+        : {}),
     },
     timeout: 90_000,
   });

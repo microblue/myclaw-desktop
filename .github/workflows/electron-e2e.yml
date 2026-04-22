@@ -26,6 +26,7 @@ jobs:
           - windows-latest
     env:
       CI: 'true'
+      OPENROUTER_TEST_API_KEY: ${{ secrets.OPENROUTER_TEST_API_KEY }}
 
     steps:
       - name: Checkout code

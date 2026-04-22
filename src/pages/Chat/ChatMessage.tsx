@@ -65,6 +65,7 @@ export const ChatMessage = memo(function ChatMessage({
 
   return (
     <div
+      data-testid={`chat-message-${role || 'unknown'}`}
       className={cn(
         'flex gap-3 group',
         isUser ? 'flex-row-reverse' : 'flex-row',

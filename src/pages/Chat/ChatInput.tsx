@@ -478,6 +478,7 @@ export function ChatInput({ onSend, onStop, disabled = false, sending = false, i
             {/* Textarea */}
             <div className="flex-1 relative">
               <Textarea
+                data-testid="chat-input-textarea"
                 ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -498,6 +499,7 @@ export function ChatInput({ onSend, onStop, disabled = false, sending = false, i
 
             {/* Send Button */}
             <Button
+              data-testid="chat-send-button"
               onClick={sending ? handleStop : handleSend}
               disabled={sending ? !canStop : !canSend}
               size="icon"
