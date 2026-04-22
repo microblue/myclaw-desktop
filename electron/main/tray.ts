@@ -8,6 +8,76 @@ import { showAutoLoginHintDialog } from './auto-login-hint';
 
 let tray: Tray | null = null;
 
+export function buildTrayMenuTemplate(mainWindow: BrowserWindow): Electron.MenuItemConstructorOptions[] {
+  const showWindow = () => {
+    if (mainWindow.isDestroyed()) return;
+    mainWindow.show();
+    mainWindow.focus();
+  };
+  return [
+    { label: 'Show MyClaw', click: showWindow },
+    { type: 'separator' },
+    { label: 'Gateway Status', enabled: false },
+    { label: '  Running', type: 'checkbox', checked: true, enabled: false },
+    { type: 'separator' },
+    {
+      label: 'Quick Actions',
+      submenu: [
+        {
+          label: 'Open Chat',
+          click: () => {
+            if (mainWindow.isDestroyed()) return;
+            mainWindow.show();
+            mainWindow.webContents.send('navigate', '/');
+          },
+        },
+        {
+          label: 'Open Settings',
+          click: () => {
+            if (mainWindow.isDestroyed()) return;
+            mainWindow.show();
+            mainWindow.webContents.send('navigate', '/settings');
+          },
+        },
+      ],
+    },
+    { type: 'separator' },
+    ...(process.platform === 'win32'
+      ? [
+          {
+            label: '配置开机自动启动...',
+            click: () => {
+              void showAutoLoginHintDialog(mainWindow.isDestroyed() ? undefined : mainWindow);
+            },
+          } as Electron.MenuItemConstructorOptions,
+          { type: 'separator' as const },
+        ]
+      : []),
+    {
+      label: 'Check for Updates...',
+      click: () => {
+        if (mainWindow.isDestroyed()) return;
+        mainWindow.webContents.send('update:check');
+      },
+    },
+    { type: 'separator' },
+    { label: 'Quit MyClaw', click: () => { app.quit(); } },
+  ];
+}
+
+export function __getE2EMenuLabels(mainWindow: BrowserWindow): string[] {
+  const flatten = (items: Electron.MenuItemConstructorOptions[]): string[] =>
+    items.flatMap((item) => {
+      if (item.type === 'separator') return [];
+      const label = typeof item.label === 'string' ? item.label : '';
+      const sub = Array.isArray(item.submenu)
+        ? flatten(item.submenu as Electron.MenuItemConstructorOptions[])
+        : [];
+      return [label, ...sub];
+    });
+  return flatten(buildTrayMenuTemplate(mainWindow));
+}
+
 /**
  * Resolve the icons directory path (works in both dev and packaged mode)
  */
@@ -56,91 +126,11 @@ export function createTray(mainWindow: BrowserWindow): Tray {
   }
   
   tray = new Tray(icon);
-  
+
   // Set tooltip
   tray.setToolTip('MyClaw - AI Assistant');
-  
-  const showWindow = () => {
-    if (mainWindow.isDestroyed()) return;
-    mainWindow.show();
-    mainWindow.focus();
-  };
 
-  // Create context menu
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'Show MyClaw',
-      click: showWindow,
-    },
-    {
-      type: 'separator',
-    },
-    {
-      label: 'Gateway Status',
-      enabled: false,
-    },
-    {
-      label: '  Running',
-      type: 'checkbox',
-      checked: true,
-      enabled: false,
-    },
-    {
-      type: 'separator',
-    },
-    {
-      label: 'Quick Actions',
-      submenu: [
-        {
-          label: 'Open Chat',
-          click: () => {
-            if (mainWindow.isDestroyed()) return;
-            mainWindow.show();
-            mainWindow.webContents.send('navigate', '/');
-          },
-        },
-        {
-          label: 'Open Settings',
-          click: () => {
-            if (mainWindow.isDestroyed()) return;
-            mainWindow.show();
-            mainWindow.webContents.send('navigate', '/settings');
-          },
-        },
-      ],
-    },
-    {
-      type: 'separator',
-    },
-    ...(process.platform === 'win32'
-      ? [
-          {
-            label: '配置开机自动启动...',
-            click: () => {
-              void showAutoLoginHintDialog(mainWindow.isDestroyed() ? undefined : mainWindow);
-            },
-          } as Electron.MenuItemConstructorOptions,
-          { type: 'separator' as const },
-        ]
-      : []),
-    {
-      label: 'Check for Updates...',
-      click: () => {
-        if (mainWindow.isDestroyed()) return;
-        mainWindow.webContents.send('update:check');
-      },
-    },
-    {
-      type: 'separator',
-    },
-    {
-      label: 'Quit MyClaw',
-      click: () => {
-        app.quit();
-      },
-    },
-  ]);
-  
+  const contextMenu = Menu.buildFromTemplate(buildTrayMenuTemplate(mainWindow));
   tray.setContextMenu(contextMenu);
   
   // Click to show window (Windows/Linux)

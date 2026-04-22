@@ -8,6 +8,7 @@ import { join } from 'path';
 import { GatewayManager } from '../gateway/manager';
 import { registerIpcHandlers } from './ipc-handlers';
 import { createTray } from './tray';
+import * as trayModule from './tray';
 import { createMenu } from './menu';
 
 import { appUpdater, registerUpdateHandlers } from './updater';
@@ -21,6 +22,7 @@ import { autoInstallCliIfNeeded, generateCompletionCache, installCompletionToPro
 import { isQuitting, setQuitting } from './app-state';
 import { applyProxySettings } from './proxy';
 import { syncLaunchAtStartupSettingFromStore } from './launch-at-startup';
+import * as launchAtStartupModule from './launch-at-startup';
 import { maybeShowAutoLoginHintOnce } from './auto-login-hint';
 import * as autoLoginHintModule from './auto-login-hint';
 import * as storeModule from '../utils/store';
@@ -59,6 +61,8 @@ if (isE2EMode) {
   (globalThis as { __myclawE2E?: unknown }).__myclawE2E = {
     autoLoginHint: autoLoginHintModule,
     store: storeModule,
+    tray: trayModule,
+    launchAtStartup: launchAtStartupModule,
   };
 }
 
