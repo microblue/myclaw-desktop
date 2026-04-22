@@ -1,0 +1,167 @@
+name: Windows Install Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'electron/**'
+      - 'scripts/**'
+      - 'electron-builder.yml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/windows-install-smoke.yml'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  install-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download uv binaries for Windows
+        run: pnpm run uv:download:win
+
+      - name: Build Windows package
+        run: pnpm run package:win
+
+      - name: Locate installer
+        id: locate
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path release -Filter "MyClaw.One-*-win-*.exe" -File | Select-Object -First 1
+          if (-not $installer) {
+            Get-ChildItem release | Format-Table Name, Length
+            throw "installer .exe not found under release/"
+          }
+          Write-Host "Found installer: $($installer.FullName)"
+          "installer=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Silent install
+        shell: pwsh
+        run: |
+          $installer = "${{ steps.locate.outputs.installer }}"
+          Write-Host "Installing: $installer"
+          $p = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru -NoNewWindow
+          Write-Host "Installer exit code: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { throw "installer returned non-zero exit code" }
+
+      - name: Verify install location
+        id: install-path
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "C:\Program Files\MyClaw.One\MyClaw.One.exe",
+            "C:\Program Files (x86)\MyClaw.One\MyClaw.One.exe"
+          )
+          $exe = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $exe) {
+            Write-Host "Expected install paths missing; listing Program Files:"
+            Get-ChildItem "C:\Program Files" -Filter "MyClaw*" -ErrorAction SilentlyContinue | Format-Table
+            throw "installed MyClaw.One.exe not found"
+          }
+          Write-Host "Installed exe: $exe"
+          "exe=$exe" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          $installDir = Split-Path $exe -Parent
+          "dir=$installDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Get-ChildItem $installDir | Format-Table Name, Length
+
+      - name: Launch installed app
+        shell: pwsh
+        run: |
+          $exe = "${{ steps.install-path.outputs.exe }}"
+          Start-Process -FilePath $exe -ArgumentList ''
+          Start-Sleep -Seconds 5
+          $procs = Get-Process -Name "MyClaw.One" -ErrorAction SilentlyContinue
+          if (-not $procs) {
+            throw "MyClaw.One process did not launch"
+          }
+          Write-Host "Process running; PID(s): $($procs.Id -join ', ')"
+
+      - name: Wait for Gateway port 18789
+        shell: pwsh
+        run: |
+          $deadline = (Get-Date).AddSeconds(180)
+          $found = $false
+          while ((Get-Date) -lt $deadline) {
+            $conn = Get-NetTCPConnection -LocalPort 18789 -State Listen -ErrorAction SilentlyContinue
+            if ($conn) {
+              $found = $true
+              Write-Host "Gateway listening on 18789 (PID $($conn[0].OwningProcess)) after $([int]((Get-Date) - $deadline.AddSeconds(-180)).TotalSeconds)s"
+              break
+            }
+            Start-Sleep -Seconds 2
+          }
+          if (-not $found) {
+            Write-Host "Gateway did not start listening within 180s; dumping process list:"
+            Get-Process | Where-Object { $_.ProcessName -match "MyClaw|openclaw|node" } | Format-Table
+            throw "gateway port 18789 is not listening post-install"
+          }
+
+      - name: Probe Gateway HTTP
+        shell: pwsh
+        run: |
+          try {
+            $r = Invoke-WebRequest -Uri 'http://127.0.0.1:18789/' -TimeoutSec 10 -UseBasicParsing
+            Write-Host "Gateway HTTP status: $($r.StatusCode)"
+          } catch {
+            # 404 / unauthorised are fine — we only care that something is serving
+            Write-Host "Gateway HTTP probe (non-2xx is OK for smoke): $_"
+          }
+
+      - name: Capture diagnostics
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host "--- Processes ---"
+          Get-Process | Where-Object { $_.ProcessName -match "MyClaw|openclaw|node" } | Format-Table
+          Write-Host "--- TCP 18789 ---"
+          Get-NetTCPConnection -LocalPort 18789 -ErrorAction SilentlyContinue | Format-Table
+          $logDir = "$env:APPDATA\MyClaw.One\logs"
+          if (Test-Path $logDir) {
+            Write-Host "--- Log dir: $logDir ---"
+            Get-ChildItem $logDir -Recurse | Select-Object -First 20 | Format-Table Name, Length
+          }
+
+      - name: Stop MyClaw processes
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Process | Where-Object { $_.ProcessName -match "MyClaw|openclaw" } | ForEach-Object {
+            try { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue } catch {}
+          }
+          Start-Sleep -Seconds 3
+
+      - name: Uninstall
+        if: always()
+        shell: pwsh
+        run: |
+          $installDir = "${{ steps.install-path.outputs.dir }}"
+          if (-not $installDir -or -not (Test-Path $installDir)) {
+            Write-Host "Nothing to uninstall"
+            return
+          }
+          $uninstaller = Get-ChildItem $installDir -Filter "Uninstall*.exe" -File | Select-Object -First 1
+          if (-not $uninstaller) {
+            Write-Host "Uninstaller not found in $installDir"
+            return
+          }
+          Write-Host "Running: $($uninstaller.FullName) /S"
+          Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait -NoNewWindow
