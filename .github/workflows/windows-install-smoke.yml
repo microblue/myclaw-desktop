@@ -95,32 +95,36 @@ jobs:
           }
           Write-Host "Process running; PID(s): $($procs.Id -join ', ')"
 
-      - name: Wait for Gateway port 18789
+      - name: Wait for Gateway port 17777
         shell: pwsh
         run: |
-          $totalWaitSec = 360
+          # First-run on Windows frequently takes ~2 min: a handshake timeout
+          # after the initial Gateway process spawn forces a restart, and the
+          # second spawn is the one that actually binds. 420s covers the
+          # worst case we've observed on windows-latest.
+          $totalWaitSec = 420
           $start = Get-Date
           $deadline = $start.AddSeconds($totalWaitSec)
           $found = $false
           while ((Get-Date) -lt $deadline) {
-            $conn = Get-NetTCPConnection -LocalPort 18789 -State Listen -ErrorAction SilentlyContinue
+            $conn = Get-NetTCPConnection -LocalPort 17777 -State Listen -ErrorAction SilentlyContinue
             if ($conn) {
               $elapsed = [int]((Get-Date) - $start).TotalSeconds
-              Write-Host "Gateway listening on 18789 (PID $($conn[0].OwningProcess)) after ${elapsed}s"
+              Write-Host "Gateway listening on 17777 (PID $($conn[0].OwningProcess)) after ${elapsed}s"
               $found = $true
               break
             }
             Start-Sleep -Seconds 3
           }
           if (-not $found) {
-            throw "gateway port 18789 is not listening after ${totalWaitSec}s"
+            throw "gateway port 17777 is not listening after ${totalWaitSec}s"
           }
 
       - name: Probe Gateway HTTP
         shell: pwsh
         run: |
           try {
-            $r = Invoke-WebRequest -Uri 'http://127.0.0.1:18789/' -TimeoutSec 10 -UseBasicParsing
+            $r = Invoke-WebRequest -Uri 'http://127.0.0.1:17777/' -TimeoutSec 10 -UseBasicParsing
             Write-Host "Gateway HTTP status: $($r.StatusCode)"
           } catch {
             # 404 / unauthorised are fine — we only care that something is serving
@@ -142,7 +146,7 @@ jobs:
             }
           } catch { Write-Host "CIM query failed: $_" }
 
-          Write-Host "`n=== TCP listeners near 18789 ==="
+          Write-Host "`n=== TCP listeners near 17777 ==="
           Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
             Where-Object { $_.LocalPort -ge 18000 -and $_.LocalPort -le 19999 } |
             Format-Table LocalAddress, LocalPort, OwningProcess
