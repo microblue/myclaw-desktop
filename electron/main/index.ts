@@ -22,6 +22,8 @@ import { isQuitting, setQuitting } from './app-state';
 import { applyProxySettings } from './proxy';
 import { syncLaunchAtStartupSettingFromStore } from './launch-at-startup';
 import { maybeShowAutoLoginHintOnce } from './auto-login-hint';
+import * as autoLoginHintModule from './auto-login-hint';
+import * as storeModule from '../utils/store';
 import {
   clearPendingSecondInstanceFocus,
   consumeMainWindowReady,
@@ -51,6 +53,13 @@ const requestedUserDataDir = process.env.MYCLAW_USER_DATA_DIR?.trim();
 
 if (isE2EMode && requestedUserDataDir) {
   app.setPath('userData', requestedUserDataDir);
+}
+
+if (isE2EMode) {
+  (globalThis as { __myclawE2E?: unknown }).__myclawE2E = {
+    autoLoginHint: autoLoginHintModule,
+    store: storeModule,
+  };
 }
 
 // Disable GPU hardware acceleration globally for maximum stability across

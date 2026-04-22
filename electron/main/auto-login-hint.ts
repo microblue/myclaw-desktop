@@ -19,9 +19,20 @@ import { logger } from '../utils/logger';
 import { getSetting, setSetting } from '../utils/store';
 import { applyLaunchAtStartupSetting } from './launch-at-startup';
 
+const e2eState = { netplwizInvocations: 0 };
+
+export function __getE2EState(): { netplwizInvocations: number } {
+  return e2eState;
+}
+
 /** Launch Windows' built-in `netplwiz` dialog (the "User Accounts" applet). */
 export function openNetplwiz(): void {
   if (process.platform !== 'win32') return;
+  if (process.env.MYCLAW_E2E === '1') {
+    e2eState.netplwizInvocations += 1;
+    logger.info('[AutoLoginHint] E2E stub: skipping netplwiz.exe spawn');
+    return;
+  }
   try {
     const child = spawn('netplwiz.exe', [], { detached: true, stdio: 'ignore' });
     child.unref();
