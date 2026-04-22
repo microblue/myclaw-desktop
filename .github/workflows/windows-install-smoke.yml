@@ -147,9 +147,12 @@ jobs:
             Where-Object { $_.LocalPort -ge 18000 -and $_.LocalPort -le 19999 } |
             Format-Table LocalAddress, LocalPort, OwningProcess
 
+          # Electron uses package.json name (myclaw-desktop), not productName
           $candidates = @(
+            "$env:APPDATA\myclaw-desktop\logs",
+            "$env:APPDATA\myclaw-desktop",
+            "$env:LOCALAPPDATA\myclaw-desktop\logs",
             "$env:APPDATA\MyClaw.One\logs",
-            "$env:LOCALAPPDATA\MyClaw.One\logs",
             "$env:USERPROFILE\.openclaw\logs",
             "$env:USERPROFILE\.openclaw"
           )
@@ -162,10 +165,47 @@ jobs:
                 Sort-Object LastWriteTime -Descending | Select-Object -First 1
               if ($latestMyclaw) {
                 Write-Host "`n=== Tail of $($latestMyclaw.FullName) ==="
-                Get-Content $latestMyclaw.FullName -Tail 200
+                Get-Content $latestMyclaw.FullName -Tail 300
               }
             }
           }
+
+          $openclawJson = "$env:USERPROFILE\.openclaw\openclaw.json"
+          if (Test-Path $openclawJson) {
+            Write-Host "`n=== $openclawJson ==="
+            Get-Content $openclawJson
+          }
+
+      - name: Stage logs for upload
+        if: always()
+        shell: pwsh
+        run: |
+          $stage = "$env:GITHUB_WORKSPACE\install-smoke-logs"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          $sources = @(
+            "$env:APPDATA\myclaw-desktop\logs",
+            "$env:LOCALAPPDATA\myclaw-desktop\logs",
+            "$env:USERPROFILE\.openclaw\logs",
+            "$env:USERPROFILE\.openclaw\openclaw.json",
+            "$env:USERPROFILE\.openclaw\openclaw.json.bak"
+          )
+          foreach ($src in $sources) {
+            if (Test-Path $src) {
+              $name = ($src -replace '[:\\]','_')
+              Copy-Item -Recurse -Force -Path $src -Destination "$stage\$name" -ErrorAction SilentlyContinue
+              Write-Host "Staged: $src -> $stage\$name"
+            }
+          }
+          Get-ChildItem $stage -Recurse | Format-Table FullName, Length
+
+      - name: Upload logs as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-smoke-logs-${{ github.run_id }}
+          path: install-smoke-logs/
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Stop MyClaw processes
         if: always()
