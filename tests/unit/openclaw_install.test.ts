@@ -124,3 +124,49 @@ describe('needs_reinstall', () => {
     expect(needs_reinstall('2026.4.22', '2026.4.23')).toBe(true);
   });
 });
+
+describe('get_openclaw_install_state', () => {
+  beforeEach(async () => {
+    vi.resetModules();
+    await rm(test_root, { recursive: true, force: true });
+    await mkdir(test_root, { recursive: true });
+  });
+
+  it('reports needs_install=true when nothing is installed', async () => {
+    const app_dir = join(test_root, 'app');
+    const home_dir = join(test_root, 'home');
+    await mkdir(app_dir, { recursive: true });
+    await mkdir(home_dir, { recursive: true });
+    await writeFile(
+      join(app_dir, 'package.json'),
+      JSON.stringify({ openclaw_version: '2026.4.22' }),
+    );
+
+    const { get_openclaw_install_state } = await import('@electron/utils/openclaw_install');
+    const state = get_openclaw_install_state(app_dir, home_dir);
+
+    expect(state.configured_version).toBe('2026.4.22');
+    expect(state.installed_version).toBeNull();
+    expect(state.runtime_dir).toBe(join(home_dir, '.myclaw', 'runtime'));
+    expect(state.needs_install).toBe(true);
+  });
+
+  it('reports needs_install=false when versions match', async () => {
+    const app_dir = join(test_root, 'app');
+    const home_dir = join(test_root, 'home');
+    await mkdir(app_dir, { recursive: true });
+    await writeFile(
+      join(app_dir, 'package.json'),
+      JSON.stringify({ openclaw_version: '2026.4.22' }),
+    );
+    const pkg_dir = join(home_dir, '.myclaw', 'runtime', 'node_modules', 'openclaw');
+    await mkdir(pkg_dir, { recursive: true });
+    await writeFile(join(pkg_dir, 'package.json'), JSON.stringify({ version: '2026.4.22' }));
+
+    const { get_openclaw_install_state } = await import('@electron/utils/openclaw_install');
+    const state = get_openclaw_install_state(app_dir, home_dir);
+
+    expect(state.installed_version).toBe('2026.4.22');
+    expect(state.needs_install).toBe(false);
+  });
+});

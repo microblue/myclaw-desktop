@@ -86,3 +86,30 @@ export function needs_reinstall(
 ): boolean {
   return installed_version !== configured_version;
 }
+
+/**
+ * Observational snapshot of the runtime-install situation at process start.
+ * Callers log this for diagnostics and (in a later commit) branch on
+ * needs_install to kick off the actual npm install.
+ */
+export interface OpenClawInstallState {
+  configured_version: string;
+  installed_version: string | null;
+  runtime_dir: string;
+  needs_install: boolean;
+}
+
+export function get_openclaw_install_state(
+  app_path: string,
+  home_dir: string,
+): OpenClawInstallState {
+  const configured_version = read_configured_openclaw_version(app_path);
+  const runtime_dir = get_openclaw_runtime_dir(home_dir);
+  const installed_version = read_installed_openclaw_version(runtime_dir);
+  return {
+    configured_version,
+    installed_version,
+    runtime_dir,
+    needs_install: needs_reinstall(configured_version, installed_version),
+  };
+}

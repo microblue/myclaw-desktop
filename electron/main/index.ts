@@ -20,6 +20,8 @@ import { ClawHubService } from '../gateway/clawhub';
 import { ensureMyClawContext, repairMyClawOnlyBootstrapFiles } from '../utils/openclaw-workspace';
 import { autoInstallCliIfNeeded, generateCompletionCache, installCompletionToProfile } from '../utils/openclaw-cli';
 import { hasResetOpenClawFlag, resetOpenClawData } from '../utils/reset-openclaw';
+import { get_openclaw_install_state } from '../utils/openclaw_install';
+import { homedir } from 'os';
 import { isQuitting, setQuitting } from './app-state';
 import { applyProxySettings } from './proxy';
 import { syncLaunchAtStartupSettingFromStore } from './launch-at-startup';
@@ -559,6 +561,20 @@ if (gotTheLock) {
     logger.info(
       `[boot] --reset-openclaw: ok=${result.ok} path=${result.path}${result.error ? ` error=${result.error}` : ''}`,
     );
+  }
+
+  // Runtime-install probe: observe + log only.  A later commit will branch on
+  // `needs_install` to spawn `npm install openclaw@<pinned>` before the
+  // Gateway starts.  For now we keep the bundled path intact and just
+  // surface the state so we can verify the detection logic works in
+  // packaged builds without any behaviour change.
+  try {
+    const install_state = get_openclaw_install_state(app.getAppPath(), homedir());
+    logger.info(
+      `[openclaw-install] configured=${install_state.configured_version} installed=${install_state.installed_version ?? 'none'} runtime_dir=${install_state.runtime_dir} needs_install=${install_state.needs_install}`,
+    );
+  } catch (err) {
+    logger.warn('[openclaw-install] failed to probe install state:', err);
   }
 
   gatewayManager = new GatewayManager();
