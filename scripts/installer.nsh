@@ -228,12 +228,25 @@ Var ForceReinstallOpenClawState
 ; headlessly (CI, enterprise deploy) is this flag.
 Var RemoveOpenClawFromCLI
 
+; NOTE on scope / compile timing:
+; electron-builder injects this installer.nsh at the very START of the
+; generated NSIS script — BEFORE it !includes MUI2.nsh, multiUser.nsh
+; (FileFunc), or the StdUtils plugin.  That means any Function declared
+; at the top-level here is compiled before those libraries are loaded
+; and will fail with "Plugin not found" / "Invalid command" / "macro
+; named X not found" if its body uses ${GetParameters}, ${isUpdated},
+; MUI_HEADER_TEXT, etc.
+;
+; Macros, on the other hand, are only EXPANDED at their !insertmacro
+; call site — which for customInit / customPageAfterChangeDir /
+; customUnInit happens inside the electron-builder templates, AFTER
+; MUI2/FileFunc are loaded.  So we nest the Page's Functions inside
+; the customPageAfterChangeDir macro: their bodies then compile at
+; expansion time, with every library already available.
+;
+; nsDialogs.nsh is standalone (no MUI dep) and just registers macros,
+; so including it at the top is harmless even in this early context.
 !include nsDialogs.nsh
-; FileFunc.nsh is pulled in by multiUser.nsh, but that happens AFTER our
-; installer.nsh is processed — so ${GetParameters} / ${GetOptions} aren't
-; defined yet when Function forceReinstallOpenClawPageCreate is compiled.
-; Include FileFunc explicitly (it has its own duplicate-include guard).
-!include FileFunc.nsh
 
 !macro customInit
   ; Accept /FORCE_REINSTALL_OPENCLAW as the headless equivalent of ticking
@@ -258,43 +271,42 @@ Var RemoveOpenClawFromCLI
   ${EndIf}
 !macroend
 
-Function forceReinstallOpenClawPageCreate
-  ; Auto-updates carry forward user state — skip the page when the
-  ; updater launched us with /updated.  We check the command line directly
-  ; instead of using electron-builder's ${isUpdated} macro: that macro
-  ; calls StdUtils::TestParameter which is not loaded in Function scope at
-  ; compile time and fails with "Plugin not found".  GetOptions / FileFunc
-  ; are always available (pulled in via multiUser.nsh).
-  ${GetParameters} $R0
-  ClearErrors
-  ${GetOptions} $R0 "/updated" $R1
-  ${IfNot} ${Errors}
-    Abort
-  ${EndIf}
-
-  !insertmacro MUI_HEADER_TEXT "OpenClaw 重置选项" "选择是否在安装前清除已有的 OpenClaw 数据"
-
-  nsDialogs::Create 1018
-  Pop $0
-  ${if} $0 == error
-    Abort
-  ${endIf}
-
-  ${NSD_CreateLabel} 0 0 100% 48u "如果 OpenClaw 无法启动，或反复安装仍未修复问题，可勾选下面的选项。安装程序会在复制文件前清除 $PROFILE\.openclaw 下的全部旧配置、skills 与缓存，然后进行全新安装。$\r$\n$\r$\n警告：此操作不可恢复，请先备份需要保留的数据。"
-  Pop $0
-
-  ${NSD_CreateCheckbox} 0 56u 100% 12u "强制重新安装 OpenClaw (将删除 $PROFILE\.openclaw 下所有文件)"
-  Pop $ForceReinstallOpenClawCheckbox
-  ${NSD_SetState} $ForceReinstallOpenClawCheckbox $ForceReinstallOpenClawState
-
-  nsDialogs::Show
-FunctionEnd
-
-Function forceReinstallOpenClawPageLeave
-  ${NSD_GetState} $ForceReinstallOpenClawCheckbox $ForceReinstallOpenClawState
-FunctionEnd
-
 !macro customPageAfterChangeDir
+  Function forceReinstallOpenClawPageCreate
+    ; Auto-updates pass /updated — skip the page so user state carries
+    ; forward unchanged.  We parse the command line directly instead of
+    ; using ${isUpdated} (StdUtils plugin not resolvable at Function
+    ; compile time even inside a late-expanded macro, because the plugin
+    ; directory is registered later still).
+    ${GetParameters} $R0
+    ClearErrors
+    ${GetOptions} $R0 "/updated" $R1
+    ${IfNot} ${Errors}
+      Abort
+    ${EndIf}
+
+    !insertmacro MUI_HEADER_TEXT "OpenClaw 重置选项" "选择是否在安装前清除已有的 OpenClaw 数据"
+
+    nsDialogs::Create 1018
+    Pop $0
+    ${if} $0 == error
+      Abort
+    ${endIf}
+
+    ${NSD_CreateLabel} 0 0 100% 48u "如果 OpenClaw 无法启动，或反复安装仍未修复问题，可勾选下面的选项。安装程序会在复制文件前清除 $PROFILE\.openclaw 下的全部旧配置、skills 与缓存，然后进行全新安装。$\r$\n$\r$\n警告：此操作不可恢复，请先备份需要保留的数据。"
+    Pop $0
+
+    ${NSD_CreateCheckbox} 0 56u 100% 12u "强制重新安装 OpenClaw (将删除 $PROFILE\.openclaw 下所有文件)"
+    Pop $ForceReinstallOpenClawCheckbox
+    ${NSD_SetState} $ForceReinstallOpenClawCheckbox $ForceReinstallOpenClawState
+
+    nsDialogs::Show
+  FunctionEnd
+
+  Function forceReinstallOpenClawPageLeave
+    ${NSD_GetState} $ForceReinstallOpenClawCheckbox $ForceReinstallOpenClawState
+  FunctionEnd
+
   Page custom forceReinstallOpenClawPageCreate forceReinstallOpenClawPageLeave
 !macroend
 
