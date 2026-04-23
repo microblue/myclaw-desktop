@@ -19,6 +19,7 @@ import { initTelemetry } from '../utils/telemetry';
 import { ClawHubService } from '../gateway/clawhub';
 import { ensureMyClawContext, repairMyClawOnlyBootstrapFiles } from '../utils/openclaw-workspace';
 import { autoInstallCliIfNeeded, generateCompletionCache, installCompletionToProfile } from '../utils/openclaw-cli';
+import { hasResetOpenClawFlag, resetOpenClawData } from '../utils/reset-openclaw';
 import { isQuitting, setQuitting } from './app-state';
 import { applyProxySettings } from './proxy';
 import { syncLaunchAtStartupSettingFromStore } from './launch-at-startup';
@@ -547,6 +548,17 @@ if (gotTheLock) {
 
   if (process.platform === 'win32') {
     app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
+  }
+
+  // --reset-openclaw: wipe ~/.openclaw before any subsystem touches it.
+  // Set either via CLI (`myclaw --reset-openclaw`) or via the menu-driven
+  // relaunch path in menu.ts → both converge here, guaranteeing the wipe
+  // happens in a fresh process with no Gateway holding file handles.
+  if (hasResetOpenClawFlag()) {
+    const result = resetOpenClawData();
+    logger.info(
+      `[boot] --reset-openclaw: ok=${result.ok} path=${result.path}${result.error ? ` error=${result.error}` : ''}`,
+    );
   }
 
   gatewayManager = new GatewayManager();

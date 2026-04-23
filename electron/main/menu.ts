@@ -2,7 +2,37 @@
  * Application Menu Configuration
  * Creates the native application menu for macOS/Windows/Linux
  */
-import { Menu, app, shell, BrowserWindow } from 'electron';
+import { Menu, app, shell, BrowserWindow, dialog } from 'electron';
+import { getOpenClawConfigDir } from '../utils/paths';
+
+async function confirmAndResetOpenClawData(): Promise<void> {
+  const parent = BrowserWindow.getFocusedWindow() ?? undefined;
+  const openclawDir = getOpenClawConfigDir();
+
+  const result = await dialog.showMessageBox(parent!, {
+    type: 'warning',
+    title: 'Reset OpenClaw Data',
+    message: '重置 OpenClaw 数据',
+    detail:
+      `此操作会删除下列目录下的全部文件：\n\n  ${openclawDir}\n\n` +
+      '包括配置、skills、缓存与登录状态。\n' +
+      '确认后 MyClaw 会自动重启并以全新状态启动。\n\n' +
+      '⚠️ 此操作不可恢复，请先备份需要保留的数据。',
+    buttons: ['取消', '重置并重启'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  });
+
+  if (result.response !== 1) return;
+
+  // Relaunch with --reset-openclaw so the wipe happens in a fresh process
+  // with no Gateway / child processes holding file handles.  index.ts runs
+  // resetOpenClawData() before GatewayManager is constructed.
+  const extraArgs = process.argv.slice(1).concat(['--reset-openclaw']);
+  app.relaunch({ args: extraArgs });
+  app.quit();
+}
 
 /**
  * Create application menu
@@ -190,6 +220,13 @@ export function createMenu(): void {
           label: 'OpenClaw Documentation',
           click: async () => {
             await shell.openExternal('https://docs.openclaw.ai');
+          },
+        },
+        { type: 'separator' },
+        {
+          label: 'Reset OpenClaw Data...',
+          click: () => {
+            void confirmAndResetOpenClawData();
           },
         },
       ],
