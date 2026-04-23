@@ -254,10 +254,18 @@ Var RemoveOpenClawFromCLI
 !macroend
 
 Function forceReinstallOpenClawPageCreate
-  ; Auto-updates run silently and carry forward user state — skip the page.
-  ${if} ${isUpdated}
+  ; Auto-updates carry forward user state — skip the page when the
+  ; updater launched us with /updated.  We check the command line directly
+  ; instead of using electron-builder's ${isUpdated} macro: that macro
+  ; calls StdUtils::TestParameter which is not loaded in Function scope at
+  ; compile time and fails with "Plugin not found".  GetOptions / FileFunc
+  ; are always available (pulled in via multiUser.nsh).
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "/updated" $R1
+  ${IfNot} ${Errors}
     Abort
-  ${endIf}
+  ${EndIf}
 
   !insertmacro MUI_HEADER_TEXT "OpenClaw 重置选项" "选择是否在安装前清除已有的 OpenClaw 数据"
 
