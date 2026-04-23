@@ -128,28 +128,18 @@ export function getPreloadPath(): string {
 /**
  * Get OpenClaw package directory.
  *
- * Packaged resolution order:
- *  1. ~/.myclaw/runtime/node_modules/openclaw/  — runtime install target,
- *     populated by ensure_myclaw_runtime_installed() on first launch.
- *  2. resources/openclaw/ bundled by electron-builder — legacy fallback
- *     for the transition period before bundle-openclaw.mjs is stripped.
+ * Packaged builds: ~/.myclaw/runtime/node_modules/openclaw/ — populated
+ * by ensure_myclaw_runtime_installed() on first launch via `npm install
+ * openclaw@<pinned>`.  The installer no longer ships a bundled openclaw,
+ * so if this directory is missing, init must run (or have run) before
+ * the gateway can start.
  *
- * Dev mode keeps using the workspace-installed openclaw so upstream
- * changes are picked up immediately without re-running runtime init.
+ * Dev mode uses the workspace-installed openclaw so upstream changes are
+ * picked up immediately without re-running runtime init.
  */
 export function getOpenClawDir(): string {
-  const packaged = getElectronApp().isPackaged;
-
-  if (packaged) {
-    // Runtime-first: a valid runtime install looks like
-    //   ~/.myclaw/runtime/node_modules/openclaw/package.json
-    // Missing package.json = either never installed, install failed
-    // mid-copy, or user wiped ~/.myclaw — fall back to bundled.
-    const runtimePkg = join(homedir(), '.myclaw', 'runtime', 'node_modules', 'openclaw');
-    if (existsSync(join(runtimePkg, 'package.json'))) {
-      return runtimePkg;
-    }
-    return join(process.resourcesPath, 'openclaw');
+  if (getElectronApp().isPackaged) {
+    return join(homedir(), '.myclaw', 'runtime', 'node_modules', 'openclaw');
   }
 
   // Development: prefer build/openclaw (has bundled deps like grammy, @buape/carbon);

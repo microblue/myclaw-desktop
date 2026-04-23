@@ -299,10 +299,10 @@ async function initialize(): Promise<void> {
   // node + npm if it's missing or out of date.  Dev mode uses the
   // workspace-installed openclaw and skips init.
   //
-  // This commit keeps paths.ts pointing at the bundled runtime, so a
-  // failed init here is non-fatal — the fallback path keeps gateway
-  // working.  Once paths.ts flips to prefer the runtime dir (next
-  // commit), a failed init will require user-facing error handling.
+  // The installer no longer ships a bundled openclaw fallback — if init
+  // fails in a packaged build, there is literally no runtime on disk
+  // for the gateway to launch, so we show an error dialog and quit
+  // instead of limping along into a broken state.
   try {
     const state = get_openclaw_install_state(app.getAppPath(), homedir());
     logger.info(
@@ -328,10 +328,17 @@ async function initialize(): Promise<void> {
       logger.info('[myclaw-runtime] already current');
     }
   } catch (err) {
-    logger.warn(
-      '[myclaw-runtime] init failed; falling back to bundled runtime for this launch:',
-      err,
-    );
+    logger.error('[myclaw-runtime] init failed:', err);
+    if (app.isPackaged) {
+      const { dialog } = await import('electron');
+      const message = err instanceof Error ? err.message : String(err);
+      dialog.showErrorBox(
+        'MyClaw runtime initialization failed',
+        `Could not initialize your MyClaw runtime.\n\n${message}\n\nCheck your network connection and try launching MyClaw again.`,
+      );
+      app.quit();
+      return;
+    }
   }
 
   if (!isE2EMode) {

@@ -226,16 +226,19 @@ interface NpmInstallSpec {
 
 function run_npm_install(spec: NpmInstallSpec): Promise<void> {
   return new Promise((resolve, reject) => {
-    // Flags chosen to mirror what `openclaw doctor --fix` uses internally so
-    // the on-disk layout matches what downstream code expects:
-    //   --no-save + --package-lock=false : no lockfile churn
-    //   --ignore-scripts                 : skip postinstalls (we don't need
-    //                                      to build native modules — plugins
-    //                                      ship prebuilt)
+    // Flag choices:
+    //   --no-save + --package-lock=false : no lockfile churn at runtime
     //   --legacy-peer-deps               : tolerate openclaw's plugin peer
-    //                                      constraints (doctor --fix uses
-    //                                      the same)
-    //   --omit=dev                       : no dev deps
+    //                                      constraints (upstream doctor --fix
+    //                                      uses the same)
+    //   --omit=dev                       : no dev deps at runtime
+    //
+    // We INTENTIONALLY do NOT pass --ignore-scripts: openclaw ships a
+    // `postinstall-bundled-plugins.mjs` that reads dist/extensions/*/
+    // package.json and installs each bundled plugin's runtime deps
+    // (@aws-sdk for tlon, @opentelemetry for diagnostics-otel, etc.).
+    // Skipping scripts was what left prior installers with 46 missing
+    // deps after `openclaw doctor`.
     const args = [
       spec.npm_cli,
       'install',
@@ -243,7 +246,6 @@ function run_npm_install(spec: NpmInstallSpec): Promise<void> {
       '--prefix', spec.prefix,
       '--no-save',
       '--package-lock=false',
-      '--ignore-scripts',
       '--legacy-peer-deps',
       '--omit=dev',
       ...(spec.extra_args ?? []),
