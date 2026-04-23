@@ -3,7 +3,10 @@
 import 'zx/globals';
 
 const ROOT_DIR = path.resolve(__dirname, '..');
-const NODE_VERSION = '22.16.0';
+// Bumped to Node 24 to match the CI toolchain (all workflows use
+// actions/setup-node with node-version: 24).  Prior 22.16.0 was a drift
+// that shipped a different ABI than what the dev/CI workflows validated.
+const NODE_VERSION = '24.0.0';
 const BASE_URL = `https://nodejs.org/dist/v${NODE_VERSION}`;
 const OUTPUT_BASE = path.join(ROOT_DIR, 'resources', 'bin');
 

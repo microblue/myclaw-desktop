@@ -10,46 +10,46 @@
  * Pinning rationale: openclaw does not promise SemVer (calendar versioning:
  * 2026.4.x).  Letting users auto-upgrade would silently break the MyClaw UI
  * whenever openclaw changes its HTTP/config/CLI contract.  So MyClaw pins
- * the exact openclaw version via the `openclawVersion` field in
+ * the exact openclaw version via the `openclaw_version` field in
  * package.json — one MyClaw release == one openclaw version.
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
 interface PartialPackageJson {
-  openclawVersion?: string;
+  openclaw_version?: string;
   version?: string;
 }
 
 /**
- * Read the openclawVersion field from MyClaw's package.json.
+ * Read the `openclaw_version` field from MyClaw's package.json.
  *
  * Throws if the field is missing — a MyClaw build without a pinned openclaw
  * version is a packaging bug, not a runtime condition we should paper over
  * with a fallback (which would silently skew installs across users).
  */
-export function readConfiguredOpenClawVersion(appPath: string): string {
-  const pkgPath = join(appPath, 'package.json');
-  const pkg: PartialPackageJson = JSON.parse(readFileSync(pkgPath, 'utf8'));
-  if (!pkg.openclawVersion || typeof pkg.openclawVersion !== 'string') {
+export function read_configured_openclaw_version(app_path: string): string {
+  const pkg_path = join(app_path, 'package.json');
+  const pkg: PartialPackageJson = JSON.parse(readFileSync(pkg_path, 'utf8'));
+  if (!pkg.openclaw_version || typeof pkg.openclaw_version !== 'string') {
     throw new Error(
-      `package.json at ${pkgPath} is missing required field "openclawVersion"`,
+      `package.json at ${pkg_path} is missing required field "openclaw_version"`,
     );
   }
-  return pkg.openclawVersion;
+  return pkg.openclaw_version;
 }
 
 /**
  * Read the installed openclaw version from a runtime directory layout:
- *   <runtimeDir>/node_modules/openclaw/package.json
+ *   <runtime_dir>/node_modules/openclaw/package.json
  *
  * Returns null if the file is missing or can't be parsed — callers treat
  * that as "not installed" and should kick off an install.
  */
-export function readInstalledOpenClawVersion(runtimeDir: string): string | null {
-  const pkgPath = join(runtimeDir, 'node_modules', 'openclaw', 'package.json');
+export function read_installed_openclaw_version(runtime_dir: string): string | null {
+  const pkg_path = join(runtime_dir, 'node_modules', 'openclaw', 'package.json');
   try {
-    const pkg: PartialPackageJson = JSON.parse(readFileSync(pkgPath, 'utf8'));
+    const pkg: PartialPackageJson = JSON.parse(readFileSync(pkg_path, 'utf8'));
     return typeof pkg.version === 'string' ? pkg.version : null;
   } catch {
     return null;
@@ -61,16 +61,16 @@ export function readInstalledOpenClawVersion(runtimeDir: string): string | null 
  *
  * npm installs here via `--prefix`, producing standard node_modules layout.
  */
-export function getOpenClawRuntimeDir(homeDir: string): string {
-  return join(homeDir, '.myclaw', 'runtime');
+export function get_openclaw_runtime_dir(home_dir: string): string {
+  return join(home_dir, '.myclaw', 'runtime');
 }
 
 /**
  * Resolve the path where the openclaw package itself lives inside the
  * runtime dir — the consumer-facing "openclaw installed at" location.
  */
-export function getOpenClawRuntimePackageDir(homeDir: string): string {
-  return join(getOpenClawRuntimeDir(homeDir), 'node_modules', 'openclaw');
+export function get_openclaw_runtime_package_dir(home_dir: string): string {
+  return join(get_openclaw_runtime_dir(home_dir), 'node_modules', 'openclaw');
 }
 
 /**
@@ -80,9 +80,9 @@ export function getOpenClawRuntimePackageDir(homeDir: string): string {
  * pinned version.  We deliberately DON'T do semver "range" comparisons —
  * exact match only, because openclaw doesn't follow semver.
  */
-export function needsReinstall(
-  configuredVersion: string,
-  installedVersion: string | null,
+export function needs_reinstall(
+  configured_version: string,
+  installed_version: string | null,
 ): boolean {
-  return installedVersion !== configuredVersion;
+  return installed_version !== configured_version;
 }
