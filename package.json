@@ -1,6 +1,7 @@
 {
     "name": "myclaw-desktop",
     "version": "1.4.4",
+    "openclawVersion": "2026.4.12",
     "pnpm": {
         "onlyBuiltDependencies": [
             "@discordjs/opus",
