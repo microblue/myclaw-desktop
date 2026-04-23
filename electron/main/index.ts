@@ -24,6 +24,10 @@ import {
   ensure_myclaw_runtime_installed,
   get_openclaw_install_state,
 } from '../utils/openclaw_install';
+import {
+  show_runtime_progress_window,
+  type RuntimeProgressWindow,
+} from './runtime-progress';
 import { homedir } from 'os';
 import { isQuitting, setQuitting } from './app-state';
 import { applyProxySettings } from './proxy';
@@ -303,6 +307,7 @@ async function initialize(): Promise<void> {
   // fails in a packaged build, there is literally no runtime on disk
   // for the gateway to launch, so we show an error dialog and quit
   // instead of limping along into a broken state.
+  let progress: RuntimeProgressWindow | null = null;
   try {
     const state = get_openclaw_install_state(app.getAppPath(), homedir());
     logger.info(
@@ -311,12 +316,17 @@ async function initialize(): Promise<void> {
 
     if (app.isPackaged && state.needs_install) {
       logger.info('[myclaw-runtime] initializing your MyClaw runtime...');
+      progress = show_runtime_progress_window();
+
       const start_ms = Date.now();
       const result = await ensure_myclaw_runtime_installed({
         app_path: app.getAppPath(),
         home_dir: homedir(),
         resources_path: process.resourcesPath,
-        on_log: (line) => logger.info(`[myclaw-runtime] ${line}`),
+        on_log: (line) => {
+          logger.info(`[myclaw-runtime] ${line}`);
+          progress?.append_log(line);
+        },
       });
       const elapsed = ((Date.now() - start_ms) / 1000).toFixed(1);
       logger.info(
@@ -339,6 +349,8 @@ async function initialize(): Promise<void> {
       app.quit();
       return;
     }
+  } finally {
+    progress?.close();
   }
 
   if (!isE2EMode) {
