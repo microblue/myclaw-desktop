@@ -1,9 +1,19 @@
 /**
  * Shared OpenClaw Plugin Install Utilities
  *
- * Provides version-aware install/upgrade logic for bundled OpenClaw plugins
- * (WeCom, QQBot, Feishu, WeChat).  Used both at app startup (to auto-upgrade
- * stale plugins) and when a user configures a channel.
+ * Provides version-aware install/upgrade logic for preinstalled OpenClaw
+ * channel plugins (WeCom, QQBot, Feishu, WeChat).  Used both at app startup
+ * (to auto-upgrade stale plugins) and when a user configures a channel.
+ *
+ * Sources (per "官方装在哪里你就去哪里读" directive):
+ *   - Packaged: ~/.myclaw/runtime/node_modules/<npm-pkg>/, populated by
+ *     ensure_myclaw_runtime_installed() from the preinstalled_plugins
+ *     map in package.json at first launch.
+ *   - Dev: workspace node_modules (pnpm-aware fallback at the bottom of
+ *     ensurePluginInstalled handles the virtual store).
+ *
+ * Target remains ~/.openclaw/extensions/<plugin-dir>/ so openclaw's
+ * existing extension loader finds them without needing config changes.
  */
 import { app } from 'electron';
 import path from 'node:path';
@@ -282,8 +292,9 @@ function listPackagesInDir(nodeModulesDir: string): Array<{ name: string; fullPa
 
 /**
  * Copy a plugin from a pnpm node_modules location, including its
- * transitive runtime dependencies (replicates bundle-openclaw-plugins.mjs
- * logic).
+ * transitive runtime dependencies — used by the dev-mode fallback when
+ * the plugin source lives in the workspace pnpm virtual store rather
+ * than in the flat runtime node_modules.
  */
 export function copyPluginFromNodeModules(npmPkgPath: string, targetDir: string, npmName: string): void {
   let realPath: string;
@@ -369,7 +380,7 @@ export function ensurePluginInstalled(
 
   // If already installed, check whether an upgrade is available
   if (existsSync(fsPath(targetManifest))) {
-    if (!sourceDir) return { installed: true }; // no bundled source to compare, keep existing
+    if (!sourceDir) return { installed: true }; // no preinstalled source to compare, keep existing
     const installedVersion = readPluginVersion(targetPkgJson);
     const sourceVersion = readPluginVersion(join(sourceDir, 'package.json'));
     if (!sourceVersion || !installedVersion || sourceVersion === installedVersion) {
@@ -381,7 +392,7 @@ export function ensurePluginInstalled(
     );
   }
 
-  // Fresh install or upgrade — try bundled/build sources first
+  // Fresh install or upgrade — try preinstalled sources first
   if (sourceDir) {
     const extensionsRoot = join(homedir(), '.openclaw', 'extensions');
     const attempts: Array<{ attempt: number; code?: string; name?: string; message: string }> = [];
@@ -396,7 +407,7 @@ export function ensurePluginInstalled(
           return { installed: false, warning: `Failed to install ${pluginLabel} plugin mirror (manifest missing).` };
         }
         fixupPluginManifest(targetDir);
-        logger.info(`Installed ${pluginLabel} plugin from bundled mirror: ${sourceDir}`);
+        logger.info(`Installed ${pluginLabel} plugin from preinstalled source: ${sourceDir}`);
         return { installed: true };
       } catch (error) {
         const diagnostic = toErrorDiagnostic(error);
@@ -412,7 +423,7 @@ export function ensurePluginInstalled(
     }
 
     logger.warn(
-      `[plugin] Bundled mirror install failed for ${pluginLabel}`,
+      `[plugin] Preinstalled source install failed for ${pluginLabel}`,
       {
         pluginDirName,
         pluginLabel,
@@ -423,7 +434,7 @@ export function ensurePluginInstalled(
       },
     );
 
-    return { installed: false, warning: `Failed to install bundled ${pluginLabel} plugin mirror` };
+    return { installed: false, warning: `Failed to install preinstalled ${pluginLabel} plugin` };
   }
 
   // Dev mode fallback: copy from node_modules with pnpm-aware dep resolution
@@ -469,24 +480,29 @@ export function ensurePluginInstalled(
 
   return {
     installed: false,
-    warning: `Bundled ${pluginLabel} plugin mirror not found. Checked: ${candidateSources.join(' | ')}`,
+    warning: `Preinstalled ${pluginLabel} plugin source not found. Checked: ${candidateSources.join(' | ')}`,
   };
 }
 
 // ── Candidate source path builder ────────────────────────────────────────────
 
 export function buildCandidateSources(pluginDirName: string): string[] {
-  return app.isPackaged
-    ? [
-      join(process.resourcesPath, 'openclaw-plugins', pluginDirName),
-      join(process.resourcesPath, 'app.asar.unpacked', 'build', 'openclaw-plugins', pluginDirName),
-      join(process.resourcesPath, 'app.asar.unpacked', 'openclaw-plugins', pluginDirName),
-    ]
-    : [
-      join(app.getAppPath(), 'build', 'openclaw-plugins', pluginDirName),
-      join(process.cwd(), 'build', 'openclaw-plugins', pluginDirName),
-      join(__dirname, '../../build/openclaw-plugins', pluginDirName),
-    ];
+  const npmName = PLUGIN_NPM_NAMES[pluginDirName];
+  if (app.isPackaged) {
+    // Packaged: MyClaw runtime is npm-installed under ~/.myclaw/runtime/.
+    // Plugins listed in package.json's preinstalled_plugins landed as
+    // direct deps at node_modules/<npm-pkg>/ alongside openclaw itself.
+    if (!npmName) return [];
+    return [join(homedir(), '.myclaw', 'runtime', 'node_modules', ...npmName.split('/'))];
+  }
+  // Dev: if someone has an ad-hoc build/openclaw-plugins/ around (old
+  // workflows), try those first; otherwise the pnpm-aware fallback
+  // below (copyPluginFromNodeModules) walks the workspace virtual store.
+  return [
+    join(app.getAppPath(), 'build', 'openclaw-plugins', pluginDirName),
+    join(process.cwd(), 'build', 'openclaw-plugins', pluginDirName),
+    join(__dirname, '../../build/openclaw-plugins', pluginDirName),
+  ];
 }
 
 // ── Per-channel plugin helpers ───────────────────────────────────────────────
@@ -514,9 +530,9 @@ export function ensureWeChatPluginInstalled(): { installed: boolean; warning?: s
 // ── Bulk startup installer ───────────────────────────────────────────────────
 
 /**
- * All bundled plugins, in the same order as after-pack.cjs BUNDLED_PLUGINS.
+ * All preinstalled plugins (what used to be called "bundled plugins").
  */
-const ALL_BUNDLED_PLUGINS = [
+const ALL_PREINSTALLED_PLUGINS = [
   { fn: ensureWeComPluginInstalled, label: 'WeCom' },
   { fn: ensureQQBotPluginInstalled, label: 'QQ Bot' },
   { fn: ensureFeishuPluginInstalled, label: 'Feishu' },
@@ -524,12 +540,12 @@ const ALL_BUNDLED_PLUGINS = [
 ] as const;
 
 /**
- * Ensure all bundled OpenClaw plugins are installed/upgraded in
- * `~/.openclaw/extensions/`.  Designed to be called once at app startup
+ * Ensure all preinstalled OpenClaw channel plugins are installed/upgraded
+ * in `~/.openclaw/extensions/`.  Designed to be called once at app startup
  * as a fire-and-forget task — errors are logged but never thrown.
  */
-export async function ensureAllBundledPluginsInstalled(): Promise<void> {
-  for (const { fn, label } of ALL_BUNDLED_PLUGINS) {
+export async function ensureAllPreinstalledPluginsInstalled(): Promise<void> {
+  for (const { fn, label } of ALL_PREINSTALLED_PLUGINS) {
     try {
       const result = fn();
       if (result.warning) {

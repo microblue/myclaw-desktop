@@ -51,7 +51,7 @@ import { createSignalQuitHandler } from './signal-quit';
 import { acquireProcessInstanceFileLock } from './process-instance-lock';
 import { getSetting } from '../utils/store';
 import { ensureBuiltinSkillsInstalled, ensurePreinstalledSkillsInstalled } from '../utils/skill-config';
-import { ensureAllBundledPluginsInstalled } from '../utils/plugin-install';
+import { ensureAllPreinstalledPluginsInstalled } from '../utils/plugin-install';
 import { startHostApiServer } from '../api/server';
 import { HostEventBus } from '../api/event-bus';
 import { deviceOAuthManager } from '../utils/device-oauth';
@@ -443,11 +443,13 @@ async function initialize(): Promise<void> {
     });
   }
 
-  // Pre-deploy/upgrade bundled OpenClaw plugins (wecom, qqbot, feishu, wechat)
-  // to ~/.openclaw/extensions/ so they are always up-to-date after an app update.
+  // Pre-deploy/upgrade preinstalled OpenClaw channel plugins (wecom, qqbot,
+  // feishu, wechat) to ~/.openclaw/extensions/ so they are always up-to-date
+  // after an app update.  Sources are the runtime node_modules populated by
+  // the first-launch npm install — no bundled files in the installer.
   if (!isE2EMode) {
-    void ensureAllBundledPluginsInstalled().catch((error) => {
-      logger.warn('Failed to install/upgrade bundled plugins:', error);
+    void ensureAllPreinstalledPluginsInstalled().catch((error) => {
+      logger.warn('Failed to install/upgrade preinstalled plugins:', error);
     });
   }
 

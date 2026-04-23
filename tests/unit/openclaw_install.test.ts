@@ -50,6 +50,42 @@ describe('read_configured_openclaw_version', () => {
   });
 });
 
+describe('read_preinstalled_plugins', () => {
+  beforeEach(async () => {
+    vi.resetModules();
+    await rm(test_root, { recursive: true, force: true });
+    await mkdir(test_root, { recursive: true });
+  });
+
+  it('returns the preinstalled_plugins map when present', async () => {
+    await writeFile(
+      join(test_root, 'package.json'),
+      JSON.stringify({
+        openclaw_version: '2026.4.22',
+        preinstalled_plugins: {
+          '@wecom/wecom-openclaw-plugin': '^2026.4.3',
+          '@larksuite/openclaw-lark': '2026.4.1',
+        },
+      }),
+    );
+    const { read_preinstalled_plugins } = await import('@electron/utils/openclaw_install');
+    const plugins = read_preinstalled_plugins(test_root);
+    expect(plugins).toEqual({
+      '@wecom/wecom-openclaw-plugin': '^2026.4.3',
+      '@larksuite/openclaw-lark': '2026.4.1',
+    });
+  });
+
+  it('returns an empty object when preinstalled_plugins is absent', async () => {
+    await writeFile(
+      join(test_root, 'package.json'),
+      JSON.stringify({ openclaw_version: '2026.4.22' }),
+    );
+    const { read_preinstalled_plugins } = await import('@electron/utils/openclaw_install');
+    expect(read_preinstalled_plugins(test_root)).toEqual({});
+  });
+});
+
 describe('read_installed_openclaw_version', () => {
   beforeEach(async () => {
     vi.resetModules();

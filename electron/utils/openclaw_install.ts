@@ -19,6 +19,7 @@ import { join } from 'path';
 
 interface PartialPackageJson {
   openclaw_version?: string;
+  preinstalled_plugins?: Record<string, string>;
   version?: string;
 }
 
@@ -38,6 +39,23 @@ export function read_configured_openclaw_version(app_path: string): string {
     );
   }
   return pkg.openclaw_version;
+}
+
+/**
+ * Read the `preinstalled_plugins` map from MyClaw's package.json.
+ *
+ * Shape: { "<npm-package-name>": "<version-spec>", ... }
+ *
+ * Returns an empty object when the field is absent.  These are fetched
+ * alongside openclaw during `npm install` so the "official" install
+ * location (~/.myclaw/runtime/node_modules/<npm-name>/) carries them —
+ * per user directive: "官方装在哪里你就去哪里读，以后没有 bundled
+ * plugin 了，有预装 plugin".
+ */
+export function read_preinstalled_plugins(app_path: string): Record<string, string> {
+  const pkg_path = join(app_path, 'package.json');
+  const pkg: PartialPackageJson = JSON.parse(readFileSync(pkg_path, 'utf8'));
+  return pkg.preinstalled_plugins ?? {};
 }
 
 /**
@@ -203,10 +221,19 @@ export async function ensure_myclaw_runtime_installed(
 
   mkdirSync(state.runtime_dir, { recursive: true });
 
+  // Install openclaw + each preinstalled plugin in a SINGLE `npm install`
+  // invocation.  npm resolves them together so shared transitive deps
+  // dedupe into one flat node_modules tree under <runtime>/node_modules/.
+  const plugins = read_preinstalled_plugins(app_path);
+  const package_specs = [
+    `openclaw@${state.configured_version}`,
+    ...Object.entries(plugins).map(([name, version]) => `${name}@${version}`),
+  ];
+
   await run_npm_install({
     node_binary,
     npm_cli,
-    package_spec: `openclaw@${state.configured_version}`,
+    package_specs,
     prefix: state.runtime_dir,
     on_log,
     extra_args: extra_npm_args,
@@ -218,7 +245,7 @@ export async function ensure_myclaw_runtime_installed(
 interface NpmInstallSpec {
   node_binary: string;
   npm_cli: string;
-  package_spec: string;
+  package_specs: string[];
   prefix: string;
   on_log?: (line: string) => void;
   extra_args?: string[];
@@ -234,15 +261,15 @@ function run_npm_install(spec: NpmInstallSpec): Promise<void> {
     //   --omit=dev                       : no dev deps at runtime
     //
     // We INTENTIONALLY do NOT pass --ignore-scripts: openclaw ships a
-    // `postinstall-bundled-plugins.mjs` that reads dist/extensions/*/
-    // package.json and installs each bundled plugin's runtime deps
-    // (@aws-sdk for tlon, @opentelemetry for diagnostics-otel, etc.).
-    // Skipping scripts was what left prior installers with 46 missing
-    // deps after `openclaw doctor`.
+    // postinstall that reads dist/extensions/*/package.json and installs
+    // each preinstalled plugin's runtime deps (@aws-sdk for tlon,
+    // @opentelemetry for diagnostics-otel, etc.).  Skipping scripts was
+    // what left prior installers with 46 missing deps after
+    // `openclaw doctor`.
     const args = [
       spec.npm_cli,
       'install',
-      spec.package_spec,
+      ...spec.package_specs,
       '--prefix', spec.prefix,
       '--no-save',
       '--package-lock=false',

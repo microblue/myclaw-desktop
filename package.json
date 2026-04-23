@@ -2,6 +2,12 @@
     "name": "myclaw-desktop",
     "version": "1.5.0",
     "openclaw_version": "2026.4.22",
+    "preinstalled_plugins": {
+        "@wecom/wecom-openclaw-plugin": "^2026.4.3",
+        "@tencent-connect/openclaw-qqbot": "^1.7.1",
+        "@larksuite/openclaw-lark": "2026.4.1",
+        "@tencent-weixin/openclaw-weixin": "^2.1.8"
+    },
     "pnpm": {
         "onlyBuiltDependencies": [
             "@discordjs/opus",

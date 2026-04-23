@@ -84,23 +84,28 @@ function readPluginVersion(pkgJsonPath: string): string | null {
   }
 }
 
-function buildBundledPluginSources(pluginDirName: string): string[] {
-  return app.isPackaged
-    ? [
-      join(process.resourcesPath, 'openclaw-plugins', pluginDirName),
-      join(process.resourcesPath, 'app.asar.unpacked', 'build', 'openclaw-plugins', pluginDirName),
-      join(process.resourcesPath, 'app.asar.unpacked', 'openclaw-plugins', pluginDirName),
-    ]
-    : [
-      join(app.getAppPath(), 'build', 'openclaw-plugins', pluginDirName),
-      join(process.cwd(), 'build', 'openclaw-plugins', pluginDirName),
-    ];
+function buildPreinstalledPluginSources(pluginDirName: string, npmName: string | undefined): string[] {
+  if (app.isPackaged) {
+    // Packaged: npm-installed MyClaw runtime at ~/.myclaw/runtime/.
+    // Plugins from package.json's preinstalled_plugins arrive as deps.
+    if (!npmName) return [];
+    return [join(homedir(), '.myclaw', 'runtime', 'node_modules', ...npmName.split('/'))];
+  }
+  // Dev: legacy build/openclaw-plugins/ (if someone still has one lying
+  // around) first, then fall through to pnpm-aware node_modules walk
+  // below.
+  return [
+    join(app.getAppPath(), 'build', 'openclaw-plugins', pluginDirName),
+    join(process.cwd(), 'build', 'openclaw-plugins', pluginDirName),
+  ];
 }
 
 /**
  * Auto-upgrade all configured channel plugins before Gateway start.
- * - Packaged mode: uses bundled plugins from resources/ (includes deps)
- * - Dev mode: falls back to node_modules/ with pnpm-aware dep collection
+ * - Packaged mode: reads from the MyClaw runtime install at
+ *   ~/.myclaw/runtime/node_modules/<npm-pkg>/ (see preinstalled_plugins
+ *   in package.json).
+ * - Dev mode: falls back to node_modules/ with pnpm-aware dep collection.
  */
 function ensureConfiguredPluginsUpgraded(configuredChannels: string[]): void {
   for (const channelType of configuredChannels) {
@@ -113,19 +118,20 @@ function ensureConfiguredPluginsUpgraded(configuredChannels: string[]): void {
     const isInstalled = existsSync(fsPath(targetManifest));
     const installedVersion = isInstalled ? readPluginVersion(join(targetDir, 'package.json')) : null;
 
-    // Try bundled sources first (packaged mode or if bundle-plugins was run)
-    const bundledSources = buildBundledPluginSources(dirName);
-    const bundledDir = bundledSources.find((dir) => existsSync(fsPath(join(dir, 'openclaw.plugin.json'))));
+    // Try preinstalled sources first (packaged runtime node_modules, or
+    // legacy build/openclaw-plugins/ in dev setups).
+    const preinstalledSources = buildPreinstalledPluginSources(dirName, npmName);
+    const preinstalledDir = preinstalledSources.find((dir) => existsSync(fsPath(join(dir, 'openclaw.plugin.json'))));
 
-    if (bundledDir) {
-      const sourceVersion = readPluginVersion(join(bundledDir, 'package.json'));
+    if (preinstalledDir) {
+      const sourceVersion = readPluginVersion(join(preinstalledDir, 'package.json'));
       // Install or upgrade if version differs or plugin not installed
       if (!isInstalled || (sourceVersion && installedVersion && sourceVersion !== installedVersion)) {
-        logger.info(`[plugin] ${isInstalled ? 'Auto-upgrading' : 'Installing'} ${channelType} plugin${isInstalled ? `: ${installedVersion} → ${sourceVersion}` : `: ${sourceVersion}`} (bundled)`);
+        logger.info(`[plugin] ${isInstalled ? 'Auto-upgrading' : 'Installing'} ${channelType} plugin${isInstalled ? `: ${installedVersion} → ${sourceVersion}` : `: ${sourceVersion}`} (preinstalled)`);
         try {
           mkdirSync(fsPath(join(homedir(), '.openclaw', 'extensions')), { recursive: true });
           rmSync(fsPath(targetDir), { recursive: true, force: true });
-          cpSyncSafe(bundledDir, targetDir);
+          cpSyncSafe(preinstalledDir, targetDir);
           fixupPluginManifest(targetDir);
         } catch (err) {
           logger.warn(`[plugin] Failed to ${isInstalled ? 'auto-upgrade' : 'install'} ${channelType} plugin:`, err);
