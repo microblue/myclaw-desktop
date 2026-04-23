@@ -563,18 +563,21 @@ if (gotTheLock) {
     );
   }
 
-  // Runtime-install probe: observe + log only.  A later commit will branch on
-  // `needs_install` to spawn `npm install openclaw@<pinned>` before the
-  // Gateway starts.  For now we keep the bundled path intact and just
-  // surface the state so we can verify the detection logic works in
-  // packaged builds without any behaviour change.
+  // MyClaw runtime probe: observe + log only.  A later commit will branch
+  // on `needs_install` to initialize the runtime (spawn `npm install
+  // openclaw@<pin>` internally) before the Gateway starts.  For now we
+  // keep the bundled path intact and just surface the state so we can
+  // verify the detection logic works in packaged builds.
+  //
+  // User-facing phrasing ("MyClaw runtime") per feedback_runtime_naming
+  // memory — code-internal names under the hood still say openclaw.
   try {
     const install_state = get_openclaw_install_state(app.getAppPath(), homedir());
     logger.info(
-      `[openclaw-install] configured=${install_state.configured_version} installed=${install_state.installed_version ?? 'none'} runtime_dir=${install_state.runtime_dir} needs_install=${install_state.needs_install}`,
+      `[myclaw-runtime] configured=${install_state.configured_version} current=${install_state.installed_version ?? 'none'} dir=${install_state.runtime_dir} needs_init=${install_state.needs_install}`,
     );
   } catch (err) {
-    logger.warn('[openclaw-install] failed to probe install state:', err);
+    logger.warn('[myclaw-runtime] failed to probe runtime state:', err);
   }
 
   gatewayManager = new GatewayManager();

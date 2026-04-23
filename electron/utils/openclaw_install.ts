@@ -113,3 +113,42 @@ export function get_openclaw_install_state(
     needs_install: needs_reinstall(configured_version, installed_version),
   };
 }
+
+/**
+ * Absolute path to the bundled Node binary shipped in the packaged
+ * app's resources/bin/ directory.
+ *
+ * electron-builder flattens `resources/bin/<plat>-<arch>/` to
+ * `resources/bin/` at package time (see electron-builder.yml), so at
+ * runtime the layout matches the top level of a Node distribution zip.
+ * Windows keeps node.exe at the root; Linux/macOS follow the Unix
+ * convention of bin/node.
+ */
+export function get_bundled_node_path(
+  resources_path: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const bin_dir = join(resources_path, 'bin');
+  if (platform === 'win32') {
+    return join(bin_dir, 'node.exe');
+  }
+  return join(bin_dir, 'bin', 'node');
+}
+
+/**
+ * Absolute path to the bundled npm-cli.js, which we spawn as
+ *   <bundled_node> <bundled_npm_cli> install openclaw@<pin> ...
+ *
+ * Windows Node zips place npm under `node_modules/npm/` at the top
+ * level; Linux/macOS tarballs place it under `lib/node_modules/npm/`.
+ */
+export function get_bundled_npm_cli_path(
+  resources_path: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const bin_dir = join(resources_path, 'bin');
+  if (platform === 'win32') {
+    return join(bin_dir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  }
+  return join(bin_dir, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js');
+}

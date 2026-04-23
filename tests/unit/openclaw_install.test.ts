@@ -125,6 +125,46 @@ describe('needs_reinstall', () => {
   });
 });
 
+describe('get_bundled_node_path', () => {
+  it('Windows: resources/bin/node.exe', async () => {
+    const { get_bundled_node_path } = await import('@electron/utils/openclaw_install');
+    expect(get_bundled_node_path('/res', 'win32')).toBe('/res/bin/node.exe');
+  });
+
+  it('Linux: resources/bin/bin/node (Unix layout)', async () => {
+    const { get_bundled_node_path } = await import('@electron/utils/openclaw_install');
+    expect(get_bundled_node_path('/res', 'linux')).toBe('/res/bin/bin/node');
+  });
+
+  it('macOS: resources/bin/bin/node (Unix layout)', async () => {
+    const { get_bundled_node_path } = await import('@electron/utils/openclaw_install');
+    expect(get_bundled_node_path('/res', 'darwin')).toBe('/res/bin/bin/node');
+  });
+});
+
+describe('get_bundled_npm_cli_path', () => {
+  it('Windows: node_modules/npm/bin/npm-cli.js at top of bin', async () => {
+    const { get_bundled_npm_cli_path } = await import('@electron/utils/openclaw_install');
+    expect(get_bundled_npm_cli_path('/res', 'win32')).toBe(
+      '/res/bin/node_modules/npm/bin/npm-cli.js',
+    );
+  });
+
+  it('Linux: lib/node_modules/npm/bin/npm-cli.js', async () => {
+    const { get_bundled_npm_cli_path } = await import('@electron/utils/openclaw_install');
+    expect(get_bundled_npm_cli_path('/res', 'linux')).toBe(
+      '/res/bin/lib/node_modules/npm/bin/npm-cli.js',
+    );
+  });
+
+  it('macOS: lib/node_modules/npm/bin/npm-cli.js', async () => {
+    const { get_bundled_npm_cli_path } = await import('@electron/utils/openclaw_install');
+    expect(get_bundled_npm_cli_path('/res', 'darwin')).toBe(
+      '/res/bin/lib/node_modules/npm/bin/npm-cli.js',
+    );
+  });
+});
+
 describe('get_openclaw_install_state', () => {
   beforeEach(async () => {
     vi.resetModules();

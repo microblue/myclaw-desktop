@@ -1,5 +1,17 @@
 #!/usr/bin/env zx
 
+// Downloads Node.js + npm for Windows targets and unpacks them into
+// resources/bin/<platform>-<arch>/.  The packaged MyClaw installer carries
+// this tree so that first-run runtime install can run
+//
+//   <bundled_node> <npm-cli.js> install openclaw@<pin>
+//
+// without depending on the user having Node on their system.
+//
+// Prior versions extracted ONLY node.exe and discarded the rest of the
+// distribution — which left us with no npm.  This script now preserves
+// the full Node archive contents.
+
 import 'zx/globals';
 
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -10,14 +22,28 @@ const NODE_VERSION = '24.0.0';
 const BASE_URL = `https://nodejs.org/dist/v${NODE_VERSION}`;
 const OUTPUT_BASE = path.join(ROOT_DIR, 'resources', 'bin');
 
+// Items a Windows Node.js zip drops at its top level.  We selectively
+// remove these before extraction so that siblings placed by other scripts
+// (uv.exe from download-bundled-uv.mjs, etc.) survive.
+const NODE_TOP_LEVEL_ITEMS = [
+  'node.exe',
+  'npm', 'npm.cmd', 'npm.ps1',
+  'npx', 'npx.cmd', 'npx.ps1',
+  'corepack', 'corepack.cmd', 'corepack.ps1',
+  'node_modules',
+  'nodevars.bat',
+  'install_tools.bat',
+  'CHANGELOG.md', 'LICENSE', 'README.md',
+];
+
 const TARGETS = {
   'win32-x64': {
     filename: `node-v${NODE_VERSION}-win-x64.zip`,
-    sourceDir: `node-v${NODE_VERSION}-win-x64`,
+    source_dir: `node-v${NODE_VERSION}-win-x64`,
   },
   'win32-arm64': {
     filename: `node-v${NODE_VERSION}-win-arm64.zip`,
-    sourceDir: `node-v${NODE_VERSION}-win-arm64`,
+    source_dir: `node-v${NODE_VERSION}-win-arm64`,
   },
 };
 
@@ -25,94 +51,100 @@ const PLATFORM_GROUPS = {
   win: ['win32-x64', 'win32-arm64'],
 };
 
-async function setupTarget(id) {
+async function setup_target(id) {
   const target = TARGETS[id];
   if (!target) {
     echo(chalk.yellow`⚠️ Target ${id} is not supported by this script.`);
     return;
   }
 
-  const targetDir = path.join(OUTPUT_BASE, id);
-  const tempDir = path.join(ROOT_DIR, 'temp_node_extract');
-  const archivePath = path.join(ROOT_DIR, target.filename);
-  const downloadUrl = `${BASE_URL}/${target.filename}`;
+  const target_dir = path.join(OUTPUT_BASE, id);
+  const temp_dir = path.join(ROOT_DIR, 'temp_node_extract');
+  const archive_path = path.join(ROOT_DIR, target.filename);
+  const download_url = `${BASE_URL}/${target.filename}`;
 
-  echo(chalk.blue`\n📦 Setting up Node.js for ${id}...`);
+  echo(chalk.blue`\n📦 Setting up Node.js + npm for ${id}...`);
 
-  // Only remove the target binary, not the entire directory,
-  // to avoid deleting uv.exe or other binaries placed by other download scripts.
-  const outputNode = path.join(targetDir, 'node.exe');
-  if (await fs.pathExists(outputNode)) {
-    await fs.remove(outputNode);
+  // Selectively remove old Node distribution items, preserving uv.exe and
+  // anything else sibling scripts deposited here.
+  for (const name of NODE_TOP_LEVEL_ITEMS) {
+    await fs.remove(path.join(target_dir, name));
   }
-  await fs.remove(tempDir);
-  await fs.ensureDir(targetDir);
-  await fs.ensureDir(tempDir);
+  await fs.remove(temp_dir);
+  await fs.ensureDir(target_dir);
+  await fs.ensureDir(temp_dir);
 
   try {
-    echo`⬇️ Downloading: ${downloadUrl}`;
-    const response = await fetch(downloadUrl);
+    echo`⬇️ Downloading: ${download_url}`;
+    const response = await fetch(download_url);
     if (!response.ok) throw new Error(`Failed to download: ${response.statusText}`);
     const buffer = await response.arrayBuffer();
-    await fs.writeFile(archivePath, Buffer.from(buffer));
+    await fs.writeFile(archive_path, Buffer.from(buffer));
 
     echo`📂 Extracting...`;
     if (os.platform() === 'win32') {
       const { execFileSync } = await import('child_process');
-      const psCommand = `Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('${archivePath.replace(/'/g, "''")}', '${tempDir.replace(/'/g, "''")}')`;
-      execFileSync('powershell.exe', ['-NoProfile', '-Command', psCommand], { stdio: 'inherit' });
+      const ps_command = `Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('${archive_path.replace(/'/g, "''")}', '${temp_dir.replace(/'/g, "''")}')`;
+      execFileSync('powershell.exe', ['-NoProfile', '-Command', ps_command], { stdio: 'inherit' });
     } else {
-      await $`unzip -q -o ${archivePath} -d ${tempDir}`;
+      await $`unzip -q -o ${archive_path} -d ${temp_dir}`;
     }
 
-    const expectedNode = path.join(tempDir, target.sourceDir, 'node.exe');
-    if (await fs.pathExists(expectedNode)) {
-      await fs.move(expectedNode, outputNode, { overwrite: true });
-    } else {
-      echo(chalk.yellow`🔍 node.exe not found in expected directory, searching...`);
-      const files = await glob('**/node.exe', { cwd: tempDir, absolute: true });
-      if (files.length > 0) {
-        await fs.move(files[0], outputNode, { overwrite: true });
-      } else {
-        throw new Error('Could not find node.exe in extracted files.');
-      }
+    const extracted_root = path.join(temp_dir, target.source_dir);
+    if (!(await fs.pathExists(extracted_root))) {
+      throw new Error(`Extracted directory not found: ${extracted_root}`);
     }
 
-    echo(chalk.green`✅ Success: ${outputNode}`);
+    // Move ALL contents (node.exe + npm + node_modules/npm/ + shims) into
+    // the target dir.  This is what the prior version missed — it only
+    // pulled node.exe and silently dropped npm, leaving first-run install
+    // with no package manager on Windows.
+    const entries = await fs.readdir(extracted_root);
+    let moved = 0;
+    for (const entry of entries) {
+      await fs.move(
+        path.join(extracted_root, entry),
+        path.join(target_dir, entry),
+        { overwrite: true },
+      );
+      moved++;
+    }
+
+    echo(chalk.green`✅ Success: ${target_dir} (${moved} top-level items, incl. node.exe + npm)`);
   } finally {
-    await fs.remove(archivePath);
-    await fs.remove(tempDir);
+    await fs.remove(archive_path);
+    await fs.remove(temp_dir);
   }
 }
 
-const downloadAll = argv.all;
-const platform = argv.platform;
+const download_all = argv.all;
+const platform_arg = argv.platform;
 
-if (downloadAll) {
-  echo(chalk.cyan`🌐 Downloading Node.js binaries for all Windows targets...`);
+if (download_all) {
+  echo(chalk.cyan`🌐 Downloading Node.js + npm for all Windows targets...`);
   for (const id of Object.keys(TARGETS)) {
-    await setupTarget(id);
+    await setup_target(id);
   }
-} else if (platform) {
-  const targets = PLATFORM_GROUPS[platform];
+} else if (platform_arg) {
+  const targets = PLATFORM_GROUPS[platform_arg];
   if (!targets) {
-    echo(chalk.red`❌ Unknown platform: ${platform}`);
+    echo(chalk.red`❌ Unknown platform: ${platform_arg}`);
     echo(`Available platforms: ${Object.keys(PLATFORM_GROUPS).join(', ')}`);
     process.exit(1);
   }
-  echo(chalk.cyan`🎯 Downloading Node.js binaries for platform: ${platform}`);
+  echo(chalk.cyan`🎯 Downloading Node.js + npm for platform: ${platform_arg}`);
   for (const id of targets) {
-    await setupTarget(id);
+    await setup_target(id);
   }
 } else {
-  const currentId = `${os.platform()}-${os.arch()}`;
-  if (TARGETS[currentId]) {
-    echo(chalk.cyan`💻 Detected Windows system: ${currentId}`);
-    await setupTarget(currentId);
+  const current_id = `${os.platform()}-${os.arch()}`;
+  if (TARGETS[current_id]) {
+    echo(chalk.cyan`💻 Detected Windows system: ${current_id}`);
+    await setup_target(current_id);
   } else {
-    echo(chalk.cyan`🎯 Defaulting to Windows multi-arch Node.js download`);
+    echo(chalk.cyan`🎯 Defaulting to Windows multi-arch Node.js + npm download`);
     for (const id of PLATFORM_GROUPS.win) {
-      await setupTarget(id);
+      await setup_target(id);
     }
   }
 }
