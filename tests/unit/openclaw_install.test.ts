@@ -6,6 +6,22 @@ const { test_root } = vi.hoisted(() => ({
   test_root: `/tmp/myclaw-openclaw-install-${Math.random().toString(36).slice(2)}`,
 }));
 
+// Helper to write a minimal package.json matching the backend-aware schema
+// (available_backends.<name>.version / preinstalled_plugins) that the
+// production code now expects.
+async function write_pkg_json(
+  dir: string,
+  openclaw: { version?: unknown; preinstalled_plugins?: unknown } | undefined,
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  const pkg: Record<string, unknown> = { name: 'myclaw-desktop', version: '1.0.0', ...extra };
+  if (openclaw !== undefined) {
+    pkg.default_backend = 'openclaw';
+    pkg.available_backends = { openclaw };
+  }
+  await writeFile(join(dir, 'package.json'), JSON.stringify(pkg));
+}
+
 describe('read_configured_openclaw_version', () => {
   beforeEach(async () => {
     vi.resetModules();
@@ -17,29 +33,26 @@ describe('read_configured_openclaw_version', () => {
     await rm(test_root, { recursive: true, force: true });
   });
 
-  it('returns the openclaw_version field from package.json', async () => {
-    await writeFile(
-      join(test_root, 'package.json'),
-      JSON.stringify({ name: 'myclaw-desktop', version: '1.0.0', openclaw_version: '2026.4.22' }),
-    );
+  it('returns the version from available_backends.openclaw.version', async () => {
+    await write_pkg_json(test_root, { version: '2026.4.22' });
     const { read_configured_openclaw_version } = await import('@electron/utils/openclaw_install');
     expect(read_configured_openclaw_version(test_root)).toBe('2026.4.22');
   });
 
-  it('throws a helpful error when openclaw_version is missing', async () => {
-    await writeFile(
-      join(test_root, 'package.json'),
-      JSON.stringify({ name: 'myclaw-desktop', version: '1.0.0' }),
-    );
+  it('throws when available_backends.openclaw is absent', async () => {
+    await write_pkg_json(test_root, undefined); // no available_backends at all
     const { read_configured_openclaw_version } = await import('@electron/utils/openclaw_install');
-    expect(() => read_configured_openclaw_version(test_root)).toThrow(/openclaw_version/);
+    expect(() => read_configured_openclaw_version(test_root)).toThrow(/openclaw/);
   });
 
-  it('throws when openclaw_version is not a string', async () => {
-    await writeFile(
-      join(test_root, 'package.json'),
-      JSON.stringify({ openclaw_version: 123 }),
-    );
+  it('throws when openclaw.version is missing', async () => {
+    await write_pkg_json(test_root, { preinstalled_plugins: {} });
+    const { read_configured_openclaw_version } = await import('@electron/utils/openclaw_install');
+    expect(() => read_configured_openclaw_version(test_root)).toThrow(/version/);
+  });
+
+  it('throws when openclaw.version is not a string', async () => {
+    await write_pkg_json(test_root, { version: 123 });
     const { read_configured_openclaw_version } = await import('@electron/utils/openclaw_install');
     expect(() => read_configured_openclaw_version(test_root)).toThrow();
   });
@@ -57,30 +70,29 @@ describe('read_preinstalled_plugins', () => {
     await mkdir(test_root, { recursive: true });
   });
 
-  it('returns the preinstalled_plugins map when present', async () => {
-    await writeFile(
-      join(test_root, 'package.json'),
-      JSON.stringify({
-        openclaw_version: '2026.4.22',
-        preinstalled_plugins: {
-          '@wecom/wecom-openclaw-plugin': '^2026.4.3',
-          '@larksuite/openclaw-lark': '2026.4.1',
-        },
-      }),
-    );
+  it('returns the preinstalled_plugins map scoped to openclaw backend', async () => {
+    await write_pkg_json(test_root, {
+      version: '2026.4.22',
+      preinstalled_plugins: {
+        '@wecom/wecom-openclaw-plugin': '^2026.4.3',
+        '@larksuite/openclaw-lark': '2026.4.1',
+      },
+    });
     const { read_preinstalled_plugins } = await import('@electron/utils/openclaw_install');
-    const plugins = read_preinstalled_plugins(test_root);
-    expect(plugins).toEqual({
+    expect(read_preinstalled_plugins(test_root)).toEqual({
       '@wecom/wecom-openclaw-plugin': '^2026.4.3',
       '@larksuite/openclaw-lark': '2026.4.1',
     });
   });
 
   it('returns an empty object when preinstalled_plugins is absent', async () => {
-    await writeFile(
-      join(test_root, 'package.json'),
-      JSON.stringify({ openclaw_version: '2026.4.22' }),
-    );
+    await write_pkg_json(test_root, { version: '2026.4.22' });
+    const { read_preinstalled_plugins } = await import('@electron/utils/openclaw_install');
+    expect(read_preinstalled_plugins(test_root)).toEqual({});
+  });
+
+  it('returns an empty object when the openclaw backend is not declared', async () => {
+    await write_pkg_json(test_root, undefined);
     const { read_preinstalled_plugins } = await import('@electron/utils/openclaw_install');
     expect(read_preinstalled_plugins(test_root)).toEqual({});
   });
@@ -155,8 +167,6 @@ describe('needs_reinstall', () => {
 
   it('exact match — no semver range logic (openclaw uses calendar versioning)', async () => {
     const { needs_reinstall } = await import('@electron/utils/openclaw_install');
-    // 2026.4.23 is "newer" but we still want to reinstall down to 2026.4.22
-    // because MyClaw has only been tested against exactly the pinned version.
     expect(needs_reinstall('2026.4.22', '2026.4.23')).toBe(true);
   });
 });
@@ -213,10 +223,7 @@ describe('get_openclaw_install_state', () => {
     const home_dir = join(test_root, 'home');
     await mkdir(app_dir, { recursive: true });
     await mkdir(home_dir, { recursive: true });
-    await writeFile(
-      join(app_dir, 'package.json'),
-      JSON.stringify({ openclaw_version: '2026.4.22' }),
-    );
+    await write_pkg_json(app_dir, { version: '2026.4.22' });
 
     const { get_openclaw_install_state } = await import('@electron/utils/openclaw_install');
     const state = get_openclaw_install_state(app_dir, home_dir);
@@ -231,10 +238,7 @@ describe('get_openclaw_install_state', () => {
     const app_dir = join(test_root, 'app');
     const home_dir = join(test_root, 'home');
     await mkdir(app_dir, { recursive: true });
-    await writeFile(
-      join(app_dir, 'package.json'),
-      JSON.stringify({ openclaw_version: '2026.4.22' }),
-    );
+    await write_pkg_json(app_dir, { version: '2026.4.22' });
     const pkg_dir = join(home_dir, '.myclaw', 'runtime', 'node_modules', 'openclaw');
     await mkdir(pkg_dir, { recursive: true });
     await writeFile(join(pkg_dir, 'package.json'), JSON.stringify({ version: '2026.4.22' }));

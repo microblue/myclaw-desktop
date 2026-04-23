@@ -17,10 +17,45 @@ import { spawn } from 'child_process';
 import { mkdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 
-interface PartialPackageJson {
-  openclaw_version?: string;
-  preinstalled_plugins?: Record<string, string>;
+interface BackendSpec {
   version?: string;
+  preinstalled_plugins?: Record<string, string>;
+}
+
+interface PartialPackageJson {
+  version?: string;
+  default_backend?: string;
+  available_backends?: Record<string, BackendSpec>;
+}
+
+/**
+ * Read a backend's entry from package.json's `available_backends` map.
+ * Throws if the backend isn't declared — callers should know which
+ * backends they are asking about (no silent fallback).
+ *
+ * The package.json shape:
+ *   {
+ *     "default_backend": "openclaw",
+ *     "available_backends": {
+ *       "openclaw": { "version": "...", "preinstalled_plugins": {...} },
+ *       "hermes":   { "version": "...", "preinstalled_plugins": {...} },
+ *     }
+ *   }
+ *
+ * This anticipates the multi-backend / multi-instance architecture laid
+ * out in ARCHITECTURE.md — today only "openclaw" is declared, but the
+ * schema does not lock us in.
+ */
+function read_backend_spec(app_path: string, backend_name: string): BackendSpec {
+  const pkg_path = join(app_path, 'package.json');
+  const pkg: PartialPackageJson = JSON.parse(readFileSync(pkg_path, 'utf8'));
+  const spec = pkg.available_backends?.[backend_name];
+  if (!spec) {
+    throw new Error(
+      `package.json at ${pkg_path} does not declare backend "${backend_name}" under available_backends`,
+    );
+  }
+  return spec;
 }
 
 /**
@@ -31,18 +66,18 @@ interface PartialPackageJson {
  * with a fallback (which would silently skew installs across users).
  */
 export function read_configured_openclaw_version(app_path: string): string {
-  const pkg_path = join(app_path, 'package.json');
-  const pkg: PartialPackageJson = JSON.parse(readFileSync(pkg_path, 'utf8'));
-  if (!pkg.openclaw_version || typeof pkg.openclaw_version !== 'string') {
+  const spec = read_backend_spec(app_path, 'openclaw');
+  if (!spec.version || typeof spec.version !== 'string') {
     throw new Error(
-      `package.json at ${pkg_path} is missing required field "openclaw_version"`,
+      `package.json is missing required field "available_backends.openclaw.version"`,
     );
   }
-  return pkg.openclaw_version;
+  return spec.version;
 }
 
 /**
- * Read the `preinstalled_plugins` map from MyClaw's package.json.
+ * Read the `preinstalled_plugins` map for the openclaw backend from
+ * package.json's `available_backends.openclaw.preinstalled_plugins`.
  *
  * Shape: { "<npm-package-name>": "<version-spec>", ... }
  *
@@ -53,9 +88,12 @@ export function read_configured_openclaw_version(app_path: string): string {
  * plugin 了，有预装 plugin".
  */
 export function read_preinstalled_plugins(app_path: string): Record<string, string> {
-  const pkg_path = join(app_path, 'package.json');
-  const pkg: PartialPackageJson = JSON.parse(readFileSync(pkg_path, 'utf8'));
-  return pkg.preinstalled_plugins ?? {};
+  try {
+    const spec = read_backend_spec(app_path, 'openclaw');
+    return spec.preinstalled_plugins ?? {};
+  } catch {
+    return {};
+  }
 }
 
 /**
