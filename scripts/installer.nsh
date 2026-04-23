@@ -214,7 +214,96 @@
 Var AutoStartCheckbox
 Var AutoStartState
 
+; --- Force-reinstall-OpenClaw checkbox (declared at global scope) ---
+; Shown on a custom page between the directory picker and file extraction.
+; When checked, $PROFILE\.openclaw is wiped before files are copied so that
+; a broken config / skills / cache state can be recovered by reinstalling.
+; CLI equivalent: /FORCE_REINSTALL_OPENCLAW (handled in customInit below).
+Var ForceReinstallOpenClawCheckbox
+Var ForceReinstallOpenClawState
+
+; --- CLI opt-in for the uninstall-time .openclaw wipe ---
+; Populated by customUnInit from /REMOVE_OPENCLAW.  In silent uninstalls the
+; MessageBox auto-answers No (/SD IDNO), so the only way to trigger the wipe
+; headlessly (CI, enterprise deploy) is this flag.
+Var RemoveOpenClawFromCLI
+
+!include nsDialogs.nsh
+
+!macro customInit
+  ; Accept /FORCE_REINSTALL_OPENCLAW as the headless equivalent of ticking
+  ; the install-time checkbox.  Silent mode skips the custom page, so this
+  ; is the only way to opt into the wipe from the command line.
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "/FORCE_REINSTALL_OPENCLAW" $R1
+  ${IfNot} ${Errors}
+    StrCpy $ForceReinstallOpenClawState ${BST_CHECKED}
+  ${EndIf}
+!macroend
+
+!macro customUnInit
+  ; Accept /REMOVE_OPENCLAW as the headless equivalent of answering Yes to
+  ; the uninstall-time "remove .openclaw?" prompt.
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "/REMOVE_OPENCLAW" $R1
+  ${IfNot} ${Errors}
+    StrCpy $RemoveOpenClawFromCLI "1"
+  ${EndIf}
+!macroend
+
+Function forceReinstallOpenClawPageCreate
+  ; Auto-updates run silently and carry forward user state — skip the page.
+  ${if} ${isUpdated}
+    Abort
+  ${endIf}
+
+  !insertmacro MUI_HEADER_TEXT "OpenClaw 重置选项" "选择是否在安装前清除已有的 OpenClaw 数据"
+
+  nsDialogs::Create 1018
+  Pop $0
+  ${if} $0 == error
+    Abort
+  ${endIf}
+
+  ${NSD_CreateLabel} 0 0 100% 48u "如果 OpenClaw 无法启动，或反复安装仍未修复问题，可勾选下面的选项。安装程序会在复制文件前清除 $PROFILE\.openclaw 下的全部旧配置、skills 与缓存，然后进行全新安装。$\r$\n$\r$\n警告：此操作不可恢复，请先备份需要保留的数据。"
+  Pop $0
+
+  ${NSD_CreateCheckbox} 0 56u 100% 12u "强制重新安装 OpenClaw (将删除 $PROFILE\.openclaw 下所有文件)"
+  Pop $ForceReinstallOpenClawCheckbox
+  ${NSD_SetState} $ForceReinstallOpenClawCheckbox $ForceReinstallOpenClawState
+
+  nsDialogs::Show
+FunctionEnd
+
+Function forceReinstallOpenClawPageLeave
+  ${NSD_GetState} $ForceReinstallOpenClawCheckbox $ForceReinstallOpenClawState
+FunctionEnd
+
+!macro customPageAfterChangeDir
+  Page custom forceReinstallOpenClawPageCreate forceReinstallOpenClawPageLeave
+!macroend
+
 !macro customInstall
+  ; --- Force-reinstall OpenClaw: wipe $PROFILE\.openclaw if the user opted in ---
+  ; Runs before any extraction so the fresh install starts from a clean state.
+  ; Scope: only the profile running the installer; per-machine installs do NOT
+  ; touch other users' .openclaw (matches user intent — they're reinstalling for
+  ; themselves, and silently wiping other users' data would surprise admins).
+  ${if} $ForceReinstallOpenClawState == ${BST_CHECKED}
+    DetailPrint "Force reinstall OpenClaw: removing $PROFILE\.openclaw..."
+    RMDir /r "$PROFILE\.openclaw"
+    IfFileExists "$PROFILE\.openclaw\*.*" 0 _ci_fr_done
+      Sleep 2000
+      nsExec::ExecToStack 'cmd.exe /c rd /s /q "$PROFILE\.openclaw"'
+      Pop $0
+      Pop $1
+      IfFileExists "$PROFILE\.openclaw\*.*" 0 _ci_fr_done
+        DetailPrint "Warning: some files under $PROFILE\.openclaw could not be removed. Please delete manually after reboot."
+    _ci_fr_done:
+  ${endIf}
+
   ; Async cleanup of old dirs left by the rename loop in customCheckAppRunning.
   ; Wait 60s before starting deletion to avoid I/O contention with MyClaw's
   ; first launch (Windows Defender scan, ASAR mapping, etc.).
@@ -304,9 +393,10 @@ Var AutoStartState
 
   _cu_pathDone:
 
-  ; Ask user if they want to remove AppData (preserves .openclaw)
+  ; Ask user if they want to remove AppData. A separate prompt below handles
+  ; the .openclaw folder so the two decisions stay independent.
   MessageBox MB_YESNO|MB_ICONQUESTION \
-    "Do you want to remove MyClaw application data?$\r$\n$\r$\nThis will delete:$\r$\n  • AppData\Local\myclaw (local app data)$\r$\n  • AppData\Roaming\myclaw (roaming app data)$\r$\n$\r$\nYour .openclaw folder (configuration & skills) will be preserved.$\r$\nSelect 'No' to keep all data for future reinstallation." \
+    "Do you want to remove MyClaw application data?$\r$\n$\r$\nThis will delete:$\r$\n  • AppData\Local\myclaw (local app data)$\r$\n  • AppData\Roaming\myclaw (roaming app data)$\r$\n$\r$\nThe .openclaw folder (OpenClaw configuration & skills) is handled by a separate question next.$\r$\nSelect 'No' to keep MyClaw app data for future reinstallation." \
     /SD IDNO IDYES _cu_removeData IDNO _cu_skipRemove
 
   _cu_removeData:
@@ -385,4 +475,32 @@ Var AutoStartState
 
   _cu_enumDone:
   _cu_skipRemove:
+
+  ; --- Independent prompt: remove $PROFILE\.openclaw ? ---
+  ; Kept separate so users who only want to wipe OpenClaw state (skills,
+  ; config, cache) can do so without also losing MyClaw's AppData (and vice
+  ; versa). Default is No — silent uninstalls preserve user data.
+  ; If /REMOVE_OPENCLAW was passed (CLI / CI), bypass the prompt entirely
+  ; and go straight to the wipe — the flag IS the answer.
+  ${if} $RemoveOpenClawFromCLI == "1"
+    Goto _cu_removeOpenClaw
+  ${endIf}
+  MessageBox MB_YESNO|MB_ICONQUESTION \
+    "Do you also want to remove the OpenClaw data folder?$\r$\n$\r$\nThis will delete:$\r$\n  • $PROFILE\.openclaw (configuration, skills, caches)$\r$\n$\r$\nSelect 'No' to keep it (recommended if you plan to reinstall and keep your current setup)." \
+    /SD IDNO IDYES _cu_removeOpenClaw IDNO _cu_skipOpenClaw
+
+  _cu_removeOpenClaw:
+    DetailPrint "Removing $PROFILE\.openclaw..."
+    RMDir /r "$PROFILE\.openclaw"
+    IfFileExists "$PROFILE\.openclaw\*.*" 0 _cu_ocDone
+      Sleep 2000
+      nsExec::ExecToStack 'cmd.exe /c rd /s /q "$PROFILE\.openclaw"'
+      Pop $0
+      Pop $1
+      IfFileExists "$PROFILE\.openclaw\*.*" 0 _cu_ocDone
+        MessageBox MB_OK|MB_ICONEXCLAMATION \
+          "Some files under $PROFILE\.openclaw could not be removed (they may be locked).$\r$\n$\r$\nPlease delete the folder manually after restarting your computer."
+    _cu_ocDone:
+
+  _cu_skipOpenClaw:
 !macroend

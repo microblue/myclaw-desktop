@@ -24,4 +24,19 @@ if [ -f "$APPARMOR_PROFILE_TARGET" ]; then
     rm -f "$APPARMOR_PROFILE_TARGET"
 fi
 
+# Opt-in purge of the OpenClaw data folder (config, skills, caches).
+# Set MYCLAW_PURGE_OPENCLAW=1 before `apt remove` / `dpkg -r` to trigger it.
+# Default is off — normal removes preserve user data for reinstallation.
+# Scope: the invoking user (SUDO_USER if present, else root) — we don't
+# enumerate /home/* because silently wiping other users' data would surprise
+# admins on shared machines.
+if [ "${MYCLAW_PURGE_OPENCLAW:-0}" = "1" ]; then
+    TARGET_USER="${SUDO_USER:-root}"
+    TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
+    if [ -n "$TARGET_HOME" ] && [ -d "$TARGET_HOME/.openclaw" ]; then
+        echo "MYCLAW_PURGE_OPENCLAW=1 set — removing $TARGET_HOME/.openclaw"
+        rm -rf "$TARGET_HOME/.openclaw"
+    fi
+fi
+
 echo "MyClaw has been removed."

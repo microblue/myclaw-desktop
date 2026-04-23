@@ -18,7 +18,7 @@ env:
 jobs:
   install-smoke:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout code
@@ -54,6 +54,17 @@ jobs:
           Write-Host "Found installer: $($installer.FullName)"
           "installer=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
+      - name: Seed .openclaw canary (regression guard for default path)
+        shell: pwsh
+        run: |
+          # A canary in $env:USERPROFILE\.openclaw lets us detect if the default
+          # silent install/uninstall ever wipes user data (it must not).
+          $openclaw = Join-Path $env:USERPROFILE ".openclaw"
+          New-Item -ItemType Directory -Force -Path $openclaw | Out-Null
+          $canary = Join-Path $openclaw "canary.txt"
+          Set-Content -Path $canary -Value "canary-default-$(Get-Date -Format o)" -Encoding utf8
+          Write-Host "Seeded canary: $canary"
+
       - name: Silent install
         shell: pwsh
         run: |
@@ -62,6 +73,15 @@ jobs:
           $p = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru -NoNewWindow
           Write-Host "Installer exit code: $($p.ExitCode)"
           if ($p.ExitCode -ne 0) { throw "installer returned non-zero exit code" }
+
+      - name: Assert canary survived default silent install
+        shell: pwsh
+        run: |
+          $canary = Join-Path $env:USERPROFILE ".openclaw\canary.txt"
+          if (-not (Test-Path $canary)) {
+            throw "REGRESSION: default silent install wiped $canary — auto-updates must preserve user data"
+          }
+          Write-Host "OK: canary survived default silent install"
 
       - name: Verify install location
         id: install-path
@@ -220,7 +240,92 @@ jobs:
           }
           Start-Sleep -Seconds 3
 
-      - name: Uninstall
+      - name: Default silent uninstall
+        shell: pwsh
+        run: |
+          $installDir = "${{ steps.install-path.outputs.dir }}"
+          $uninstaller = Get-ChildItem $installDir -Filter "Uninstall*.exe" -File | Select-Object -First 1
+          if (-not $uninstaller) { throw "Uninstaller not found in $installDir" }
+          Write-Host "Running: $($uninstaller.FullName) /S"
+          $p = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "default uninstaller exit $($p.ExitCode)" }
+
+      - name: Assert canary survived default silent uninstall
+        shell: pwsh
+        run: |
+          $canary = Join-Path $env:USERPROFILE ".openclaw\canary.txt"
+          if (-not (Test-Path $canary)) {
+            throw "REGRESSION: default silent uninstall wiped $canary — must require /REMOVE_OPENCLAW"
+          }
+          Write-Host "OK: canary survived default silent uninstall"
+
+      - name: Re-seed canary for /FORCE_REINSTALL_OPENCLAW test
+        shell: pwsh
+        run: |
+          $openclaw = Join-Path $env:USERPROFILE ".openclaw"
+          New-Item -ItemType Directory -Force -Path $openclaw | Out-Null
+          Set-Content -Path (Join-Path $openclaw "canary.txt") -Value "canary-force-reinstall" -Encoding utf8
+
+      - name: Install with /S /FORCE_REINSTALL_OPENCLAW
+        shell: pwsh
+        run: |
+          $installer = "${{ steps.locate.outputs.installer }}"
+          Write-Host "Installing with /FORCE_REINSTALL_OPENCLAW: $installer"
+          $p = Start-Process -FilePath $installer -ArgumentList '/S','/FORCE_REINSTALL_OPENCLAW' -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "force-reinstall installer exit $($p.ExitCode)" }
+
+      - name: Assert canary wiped by /FORCE_REINSTALL_OPENCLAW
+        shell: pwsh
+        run: |
+          $canary = Join-Path $env:USERPROFILE ".openclaw\canary.txt"
+          if (Test-Path $canary) {
+            throw "BUG: /FORCE_REINSTALL_OPENCLAW install did NOT wipe $canary"
+          }
+          Write-Host "OK: /FORCE_REINSTALL_OPENCLAW wiped .openclaw before install"
+
+      - name: Uninstall (cleanup between opt-in tests)
+        shell: pwsh
+        run: |
+          $installDir = "${{ steps.install-path.outputs.dir }}"
+          $uninstaller = Get-ChildItem $installDir -Filter "Uninstall*.exe" -File | Select-Object -First 1
+          if (-not $uninstaller) { throw "Uninstaller not found for cleanup" }
+          $p = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "cleanup uninstaller exit $($p.ExitCode)" }
+
+      - name: Re-install (to exercise /REMOVE_OPENCLAW uninstall)
+        shell: pwsh
+        run: |
+          $installer = "${{ steps.locate.outputs.installer }}"
+          $p = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "reinstall exit $($p.ExitCode)" }
+
+      - name: Re-seed canary for /REMOVE_OPENCLAW test
+        shell: pwsh
+        run: |
+          $openclaw = Join-Path $env:USERPROFILE ".openclaw"
+          New-Item -ItemType Directory -Force -Path $openclaw | Out-Null
+          Set-Content -Path (Join-Path $openclaw "canary.txt") -Value "canary-remove-openclaw" -Encoding utf8
+
+      - name: Uninstall with /S /REMOVE_OPENCLAW
+        shell: pwsh
+        run: |
+          $installDir = "${{ steps.install-path.outputs.dir }}"
+          $uninstaller = Get-ChildItem $installDir -Filter "Uninstall*.exe" -File | Select-Object -First 1
+          if (-not $uninstaller) { throw "Uninstaller not found for /REMOVE_OPENCLAW test" }
+          Write-Host "Running: $($uninstaller.FullName) /S /REMOVE_OPENCLAW"
+          $p = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S','/REMOVE_OPENCLAW' -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "/REMOVE_OPENCLAW uninstaller exit $($p.ExitCode)" }
+
+      - name: Assert canary wiped by /REMOVE_OPENCLAW
+        shell: pwsh
+        run: |
+          $canary = Join-Path $env:USERPROFILE ".openclaw\canary.txt"
+          if (Test-Path $canary) {
+            throw "BUG: /REMOVE_OPENCLAW uninstall did NOT wipe $canary"
+          }
+          Write-Host "OK: /REMOVE_OPENCLAW wiped .openclaw"
+
+      - name: Final cleanup (best-effort)
         if: always()
         shell: pwsh
         run: |
@@ -229,10 +334,10 @@ jobs:
             Write-Host "Nothing to uninstall"
             return
           }
-          $uninstaller = Get-ChildItem $installDir -Filter "Uninstall*.exe" -File | Select-Object -First 1
+          $uninstaller = Get-ChildItem $installDir -Filter "Uninstall*.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $uninstaller) {
             Write-Host "Uninstaller not found in $installDir"
             return
           }
-          Write-Host "Running: $($uninstaller.FullName) /S"
+          Write-Host "Final cleanup: $($uninstaller.FullName) /S"
           Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait -NoNewWindow
