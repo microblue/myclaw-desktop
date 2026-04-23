@@ -1,6 +1,6 @@
 {
     "name": "myclaw-desktop",
-    "version": "1.4.4",
+    "version": "1.5.0",
     "openclaw_version": "2026.4.22",
     "pnpm": {
         "onlyBuiltDependencies": [
