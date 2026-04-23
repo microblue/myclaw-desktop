@@ -1,6 +1,6 @@
 import { app } from 'electron';
 import path from 'path';
-import { existsSync, readFileSync, mkdirSync, rmSync } from 'fs';
+import { existsSync, rmSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 
@@ -26,7 +26,6 @@ import { buildProxyEnv, resolveProxySettings } from '../utils/proxy';
 import { syncProxyConfigToOpenClaw } from '../utils/openclaw-proxy';
 import { logger } from '../utils/logger';
 import { prependPathEntry } from '../utils/env-path';
-import { copyPluginFromNodeModules, fixupPluginManifest, cpSyncSafe } from '../utils/plugin-install';
 import { stripSystemdSupervisorEnv } from './config-sync-env';
 
 
@@ -43,8 +42,11 @@ export interface GatewayLaunchContext {
   channelStartupSummary: string;
 }
 
-// ── Auto-upgrade bundled plugins on startup ──────────────────────
-
+// ── Channel → plugin metadata ────────────────────────────────────
+// Identifies which channels correspond to which plugins.  Used when
+// normalising plugins.allow entries in openclaw.json.  MyClaw no longer
+// copies plugin files anywhere (see "不要改 openclaw 自己的安装过程和
+// 路径"), so this map is now purely for ID mapping.
 const CHANNEL_PLUGIN_MAP: Record<string, { dirName: string; npmName: string }> = {
   wecom: { dirName: 'wecom', npmName: '@wecom/wecom-openclaw-plugin' },
   feishu: { dirName: 'feishu-openclaw-plugin', npmName: '@larksuite/openclaw-lark' },
@@ -52,12 +54,15 @@ const CHANNEL_PLUGIN_MAP: Record<string, { dirName: string; npmName: string }> =
   'openclaw-weixin': { dirName: 'openclaw-weixin', npmName: '@tencent-weixin/openclaw-weixin' },
 };
 
-/**
- * OpenClaw 3.22+ ships Discord, Telegram, and other channels as built-in
- * extensions.  If a previous MyClaw version copied one of these into
- * ~/.openclaw/extensions/, the broken copy overrides the working built-in
- * plugin and must be removed.
- */
+// ── Cleanup stale extension copies from prior MyClaw versions ──────
+//
+// Before MyClaw switched to fetch-at-first-launch, we eagerly copied
+// channel plugins into ~/.openclaw/extensions/.  For OpenClaw's own
+// built-in extensions (Discord, Telegram, etc.) that copy is actively
+// harmful — it shadows the working built-in plugin with a stale fork.
+// Runs once per Gateway start to scrub any leftovers from older MyClaw
+// installs.  Keeping this behaviour even in the new architecture because
+// user machines in the wild may still carry these leftovers.
 const BUILTIN_CHANNEL_EXTENSIONS = ['discord', 'telegram'];
 
 function cleanupStaleBuiltInExtensions(): void {
@@ -69,101 +74,6 @@ function cleanupStaleBuiltInExtensions(): void {
         rmSync(fsPath(extDir), { recursive: true, force: true });
       } catch (err) {
         logger.warn(`[plugin] Failed to remove stale extension ${ext}:`, err);
-      }
-    }
-  }
-}
-
-function readPluginVersion(pkgJsonPath: string): string | null {
-  try {
-    const raw = readFileSync(fsPath(pkgJsonPath), 'utf-8');
-    const parsed = JSON.parse(raw) as { version?: string };
-    return parsed.version ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function buildPreinstalledPluginSources(pluginDirName: string, npmName: string | undefined): string[] {
-  if (app.isPackaged) {
-    // Packaged: npm-installed MyClaw runtime at ~/.myclaw/runtime/.
-    // Plugins from package.json's preinstalled_plugins arrive as deps.
-    if (!npmName) return [];
-    return [join(homedir(), '.myclaw', 'runtime', 'node_modules', ...npmName.split('/'))];
-  }
-  // Dev: legacy build/openclaw-plugins/ (if someone still has one lying
-  // around) first, then fall through to pnpm-aware node_modules walk
-  // below.
-  return [
-    join(app.getAppPath(), 'build', 'openclaw-plugins', pluginDirName),
-    join(process.cwd(), 'build', 'openclaw-plugins', pluginDirName),
-  ];
-}
-
-/**
- * Auto-upgrade all configured channel plugins before Gateway start.
- * - Packaged mode: reads from the MyClaw runtime install at
- *   ~/.myclaw/runtime/node_modules/<npm-pkg>/ (see preinstalled_plugins
- *   in package.json).
- * - Dev mode: falls back to node_modules/ with pnpm-aware dep collection.
- */
-function ensureConfiguredPluginsUpgraded(configuredChannels: string[]): void {
-  for (const channelType of configuredChannels) {
-    const pluginInfo = CHANNEL_PLUGIN_MAP[channelType];
-    if (!pluginInfo) continue;
-    const { dirName, npmName } = pluginInfo;
-
-    const targetDir = join(homedir(), '.openclaw', 'extensions', dirName);
-    const targetManifest = join(targetDir, 'openclaw.plugin.json');
-    const isInstalled = existsSync(fsPath(targetManifest));
-    const installedVersion = isInstalled ? readPluginVersion(join(targetDir, 'package.json')) : null;
-
-    // Try preinstalled sources first (packaged runtime node_modules, or
-    // legacy build/openclaw-plugins/ in dev setups).
-    const preinstalledSources = buildPreinstalledPluginSources(dirName, npmName);
-    const preinstalledDir = preinstalledSources.find((dir) => existsSync(fsPath(join(dir, 'openclaw.plugin.json'))));
-
-    if (preinstalledDir) {
-      const sourceVersion = readPluginVersion(join(preinstalledDir, 'package.json'));
-      // Install or upgrade if version differs or plugin not installed
-      if (!isInstalled || (sourceVersion && installedVersion && sourceVersion !== installedVersion)) {
-        logger.info(`[plugin] ${isInstalled ? 'Auto-upgrading' : 'Installing'} ${channelType} plugin${isInstalled ? `: ${installedVersion} → ${sourceVersion}` : `: ${sourceVersion}`} (preinstalled)`);
-        try {
-          mkdirSync(fsPath(join(homedir(), '.openclaw', 'extensions')), { recursive: true });
-          rmSync(fsPath(targetDir), { recursive: true, force: true });
-          cpSyncSafe(preinstalledDir, targetDir);
-          fixupPluginManifest(targetDir);
-        } catch (err) {
-          logger.warn(`[plugin] Failed to ${isInstalled ? 'auto-upgrade' : 'install'} ${channelType} plugin:`, err);
-        }
-      } else if (isInstalled) {
-        // Same version already installed — still patch manifest ID in case it was
-        // never corrected (e.g. installed before MANIFEST_ID_FIXES included this plugin).
-        fixupPluginManifest(targetDir);
-      }
-      continue;
-    }
-
-    // Dev mode fallback: copy from node_modules/ with pnpm dep resolution
-    if (!app.isPackaged) {
-      const npmPkgPath = join(process.cwd(), 'node_modules', ...npmName.split('/'));
-      if (!existsSync(fsPath(join(npmPkgPath, 'openclaw.plugin.json')))) continue;
-      const sourceVersion = readPluginVersion(join(npmPkgPath, 'package.json'));
-      if (!sourceVersion) continue;
-      // Skip only if installed AND same version — but still patch manifest ID.
-      if (isInstalled && installedVersion && sourceVersion === installedVersion) {
-        fixupPluginManifest(targetDir);
-        continue;
-      }
-
-      logger.info(`[plugin] ${isInstalled ? 'Auto-upgrading' : 'Installing'} ${channelType} plugin${isInstalled ? `: ${installedVersion} → ${sourceVersion}` : `: ${sourceVersion}`} (dev/node_modules)`);
-
-      try {
-        mkdirSync(fsPath(join(homedir(), '.openclaw', 'extensions')), { recursive: true });
-        copyPluginFromNodeModules(npmPkgPath, targetDir, npmName);
-        fixupPluginManifest(targetDir);
-      } catch (err) {
-        logger.warn(`[plugin] Failed to ${isInstalled ? 'auto-upgrade' : 'install'} ${channelType} plugin from node_modules:`, err);
       }
     }
   }
@@ -209,7 +119,7 @@ export async function syncGatewayConfigBeforeLaunch(
       const allowList = Array.isArray(rawCfg.plugins?.allow) ? (rawCfg.plugins!.allow as string[]) : [];
       // Build reverse maps: dirName → channelType AND known manifest IDs → channelType
       const pluginIdToChannel: Record<string, string> = {};
-      for (const [channelType, info] of Object.entries(CHANNEL_PLUGIN_MAP)) {
+      for (const [channelType, info] of Object.entries(CHANNEL_PLUGIN_MAP) as Array<[string, { dirName: string; npmName: string }]>) {
         pluginIdToChannel[info.dirName] = channelType;
       }
       // Known manifest IDs that differ from their dirName/channelType
@@ -228,9 +138,13 @@ export async function syncGatewayConfigBeforeLaunch(
       logger.warn('[plugin] Failed to augment channel list from plugins.allow:', err);
     }
 
-    ensureConfiguredPluginsUpgraded(configuredChannels);
+    // Pre-Gateway auto-upgrade step is intentionally gone — plugins live
+    // at ~/.myclaw/runtime/node_modules/ after first-launch npm install,
+    // and openclaw resolves them natively.  We stay out of
+    // ~/.openclaw/extensions/ entirely per product directive.
+    void configuredChannels;
   } catch (err) {
-    logger.warn('Failed to auto-upgrade plugins:', err);
+    logger.warn('Failed to sync configured channels:', err);
   }
 
   try {

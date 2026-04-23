@@ -51,7 +51,6 @@ import { createSignalQuitHandler } from './signal-quit';
 import { acquireProcessInstanceFileLock } from './process-instance-lock';
 import { getSetting } from '../utils/store';
 import { ensureBuiltinSkillsInstalled, ensurePreinstalledSkillsInstalled } from '../utils/skill-config';
-import { ensureAllPreinstalledPluginsInstalled } from '../utils/plugin-install';
 import { startHostApiServer } from '../api/server';
 import { HostEventBus } from '../api/event-bus';
 import { deviceOAuthManager } from '../utils/device-oauth';
@@ -443,15 +442,14 @@ async function initialize(): Promise<void> {
     });
   }
 
-  // Pre-deploy/upgrade preinstalled OpenClaw channel plugins (wecom, qqbot,
-  // feishu, wechat) to ~/.openclaw/extensions/ so they are always up-to-date
-  // after an app update.  Sources are the runtime node_modules populated by
-  // the first-launch npm install — no bundled files in the installer.
-  if (!isE2EMode) {
-    void ensureAllPreinstalledPluginsInstalled().catch((error) => {
-      logger.warn('Failed to install/upgrade preinstalled plugins:', error);
-    });
-  }
+  // NOTE: we intentionally do NOT pre-deploy channel plugins into
+  // ~/.openclaw/extensions/ anymore.  Per product directive "不要改
+  // openclaw 自己的安装过程和路径", MyClaw stays out of openclaw's
+  // extension dir entirely.  Plugins are installed once to
+  // ~/.myclaw/runtime/node_modules/<npm-pkg>/ by the first-launch
+  // npm install (see preinstalled_plugins in package.json) and openclaw
+  // resolves them natively via Node's module resolution walking up from
+  // its own package root.
 
   // Bridge gateway and host-side events before any auto-start logic runs, so
   // renderer subscribers observe the full startup lifecycle.
