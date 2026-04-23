@@ -13,7 +13,8 @@
  * the exact openclaw version via the `openclaw_version` field in
  * package.json — one MyClaw release == one openclaw version.
  */
-import { readFileSync } from 'fs';
+import { spawn } from 'child_process';
+import { mkdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 
 interface PartialPackageJson {
@@ -151,4 +152,121 @@ export function get_bundled_npm_cli_path(
     return join(bin_dir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
   }
   return join(bin_dir, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js');
+}
+
+/**
+ * Ensure the MyClaw runtime (openclaw pinned to package.json's
+ * openclaw_version) is installed under ~/.myclaw/runtime/.
+ *
+ * If nothing needs doing (already installed at the right version) it
+ * returns immediately with was_installed=false.  Otherwise it spawns the
+ * bundled Node + bundled npm to `npm install openclaw@<pin> --prefix
+ * <runtime_dir>` and pipes stdout/stderr to `on_log` for UI consumption.
+ *
+ * User-facing logs should use "MyClaw runtime" phrasing (see
+ * feedback_runtime_naming memory).
+ */
+export interface RuntimeInitOptions {
+  app_path: string;
+  home_dir: string;
+  resources_path: string;
+  platform?: NodeJS.Platform;
+  on_log?: (line: string) => void;
+  /** Extra npm flags for tests / special scenarios (e.g. --registry=...). */
+  extra_npm_args?: string[];
+}
+
+export interface RuntimeInitResult {
+  version: string;
+  was_installed: boolean;
+}
+
+export async function ensure_myclaw_runtime_installed(
+  options: RuntimeInitOptions,
+): Promise<RuntimeInitResult> {
+  const {
+    app_path,
+    home_dir,
+    resources_path,
+    platform = process.platform,
+    on_log,
+    extra_npm_args = [],
+  } = options;
+
+  const state = get_openclaw_install_state(app_path, home_dir);
+  if (!state.needs_install) {
+    return { version: state.installed_version ?? state.configured_version, was_installed: false };
+  }
+
+  const node_binary = get_bundled_node_path(resources_path, platform);
+  const npm_cli = get_bundled_npm_cli_path(resources_path, platform);
+
+  mkdirSync(state.runtime_dir, { recursive: true });
+
+  await run_npm_install({
+    node_binary,
+    npm_cli,
+    package_spec: `openclaw@${state.configured_version}`,
+    prefix: state.runtime_dir,
+    on_log,
+    extra_args: extra_npm_args,
+  });
+
+  return { version: state.configured_version, was_installed: true };
+}
+
+interface NpmInstallSpec {
+  node_binary: string;
+  npm_cli: string;
+  package_spec: string;
+  prefix: string;
+  on_log?: (line: string) => void;
+  extra_args?: string[];
+}
+
+function run_npm_install(spec: NpmInstallSpec): Promise<void> {
+  return new Promise((resolve, reject) => {
+    // Flags chosen to mirror what `openclaw doctor --fix` uses internally so
+    // the on-disk layout matches what downstream code expects:
+    //   --no-save + --package-lock=false : no lockfile churn
+    //   --ignore-scripts                 : skip postinstalls (we don't need
+    //                                      to build native modules — plugins
+    //                                      ship prebuilt)
+    //   --legacy-peer-deps               : tolerate openclaw's plugin peer
+    //                                      constraints (doctor --fix uses
+    //                                      the same)
+    //   --omit=dev                       : no dev deps
+    const args = [
+      spec.npm_cli,
+      'install',
+      spec.package_spec,
+      '--prefix', spec.prefix,
+      '--no-save',
+      '--package-lock=false',
+      '--ignore-scripts',
+      '--legacy-peer-deps',
+      '--omit=dev',
+      ...(spec.extra_args ?? []),
+    ];
+
+    const child = spawn(spec.node_binary, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, NODE_ENV: 'production' },
+    });
+
+    const pipe_lines = (chunk: Buffer) => {
+      if (!spec.on_log) return;
+      for (const line of chunk.toString().split(/\r?\n/)) {
+        if (line.trim()) spec.on_log(line);
+      }
+    };
+
+    child.stdout?.on('data', pipe_lines);
+    child.stderr?.on('data', pipe_lines);
+    child.on('error', reject);
+    child.on('exit', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`MyClaw runtime init exited with code ${code}`));
+    });
+  });
 }

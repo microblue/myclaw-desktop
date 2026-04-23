@@ -20,7 +20,10 @@ import { ClawHubService } from '../gateway/clawhub';
 import { ensureMyClawContext, repairMyClawOnlyBootstrapFiles } from '../utils/openclaw-workspace';
 import { autoInstallCliIfNeeded, generateCompletionCache, installCompletionToProfile } from '../utils/openclaw-cli';
 import { hasResetOpenClawFlag, resetOpenClawData } from '../utils/reset-openclaw';
-import { get_openclaw_install_state } from '../utils/openclaw_install';
+import {
+  ensure_myclaw_runtime_installed,
+  get_openclaw_install_state,
+} from '../utils/openclaw_install';
 import { homedir } from 'os';
 import { isQuitting, setQuitting } from './app-state';
 import { applyProxySettings } from './proxy';
@@ -290,6 +293,46 @@ async function initialize(): Promise<void> {
   logger.debug(
     `Runtime: platform=${process.platform}/${process.arch}, electron=${process.versions.electron}, node=${process.versions.node}, packaged=${app.isPackaged}, pid=${process.pid}, ppid=${process.ppid}`
   );
+
+  // Initialize MyClaw runtime.  In packaged builds, this fetches the
+  // pinned openclaw version into ~/.myclaw/runtime/ via the bundled
+  // node + npm if it's missing or out of date.  Dev mode uses the
+  // workspace-installed openclaw and skips init.
+  //
+  // This commit keeps paths.ts pointing at the bundled runtime, so a
+  // failed init here is non-fatal — the fallback path keeps gateway
+  // working.  Once paths.ts flips to prefer the runtime dir (next
+  // commit), a failed init will require user-facing error handling.
+  try {
+    const state = get_openclaw_install_state(app.getAppPath(), homedir());
+    logger.info(
+      `[myclaw-runtime] configured=${state.configured_version} current=${state.installed_version ?? 'none'} dir=${state.runtime_dir} needs_init=${state.needs_install}`,
+    );
+
+    if (app.isPackaged && state.needs_install) {
+      logger.info('[myclaw-runtime] initializing your MyClaw runtime...');
+      const start_ms = Date.now();
+      const result = await ensure_myclaw_runtime_installed({
+        app_path: app.getAppPath(),
+        home_dir: homedir(),
+        resources_path: process.resourcesPath,
+        on_log: (line) => logger.info(`[myclaw-runtime] ${line}`),
+      });
+      const elapsed = ((Date.now() - start_ms) / 1000).toFixed(1);
+      logger.info(
+        `[myclaw-runtime] initialization complete: ${result.version} (${elapsed}s)`,
+      );
+    } else if (!app.isPackaged) {
+      logger.info('[myclaw-runtime] dev mode — using workspace-installed openclaw');
+    } else {
+      logger.info('[myclaw-runtime] already current');
+    }
+  } catch (err) {
+    logger.warn(
+      '[myclaw-runtime] init failed; falling back to bundled runtime for this launch:',
+      err,
+    );
+  }
 
   if (!isE2EMode) {
     // Warm up network optimization (non-blocking)
@@ -561,23 +604,6 @@ if (gotTheLock) {
     logger.info(
       `[boot] --reset-openclaw: ok=${result.ok} path=${result.path}${result.error ? ` error=${result.error}` : ''}`,
     );
-  }
-
-  // MyClaw runtime probe: observe + log only.  A later commit will branch
-  // on `needs_install` to initialize the runtime (spawn `npm install
-  // openclaw@<pin>` internally) before the Gateway starts.  For now we
-  // keep the bundled path intact and just surface the state so we can
-  // verify the detection logic works in packaged builds.
-  //
-  // User-facing phrasing ("MyClaw runtime") per feedback_runtime_naming
-  // memory — code-internal names under the hood still say openclaw.
-  try {
-    const install_state = get_openclaw_install_state(app.getAppPath(), homedir());
-    logger.info(
-      `[myclaw-runtime] configured=${install_state.configured_version} current=${install_state.installed_version ?? 'none'} dir=${install_state.runtime_dir} needs_init=${install_state.needs_install}`,
-    );
-  } catch (err) {
-    logger.warn('[myclaw-runtime] failed to probe runtime state:', err);
   }
 
   gatewayManager = new GatewayManager();
