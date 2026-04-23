@@ -783,6 +783,39 @@ function patchBundledRuntime(outputDir) {
   }
 }
 
+// 6.5 Install plugin runtime dependencies via `openclaw doctor --fix`.
+//
+// Plugins shipped under dist/extensions/<id>/ declare their npm dependencies
+// in each plugin's own package.json.  These deps are NOT part of openclaw's
+// dep graph — they're detected lazily by `openclaw doctor` at runtime — so
+// the BFS above misses them entirely.  Left alone, a fresh install flags
+// 40+ missing deps (tlon / msteams / twitch / diagnostics-otel / acpx /
+// lobster / zalouser / ...) the first time `openclaw doctor` runs, and asks
+// the user to click "Install" which then spawns `npm install` on their
+// machine.  That runtime install frequently fails on Windows (npm not in
+// PATH from the electron spawn env, Program Files perms, no network).
+//
+// So: run the same `doctor --fix` HERE at build time against build/openclaw/.
+// `resolveOpenClawPackageRootSync()` in the bundled CLI will lock onto
+// build/openclaw/package.json, and the `npm install` runs with
+// cwd=build/openclaw/, dropping the missing packages into
+// build/openclaw/node_modules/.  after-pack.cjs's existing manual copy then
+// carries them into the packaged resources/openclaw/node_modules/, so the
+// shipped installer is self-contained.
+//
+// Placed BEFORE the patchBrokenModules step so lru-cache / node-domexception
+// patches also cover packages npm just added.
+echo``;
+echo`🔧 Installing plugin runtime deps via \`openclaw doctor --fix\`...`;
+try {
+  await $({ cwd: OUTPUT })`node openclaw.mjs doctor --fix`;
+  echo`   ✅ doctor --fix finished`;
+} catch (err) {
+  echo`   ⚠️  doctor --fix exited non-zero (${err.exitCode ?? '?'}).`;
+  echo`      Build continues; user may still need to fix-up at first run.`;
+  if (err.stderr) echo`      stderr tail: ${String(err.stderr).slice(-400)}`;
+}
+
 patchBrokenModules(outputNodeModules);
 patchBundledRuntime(OUTPUT);
 
