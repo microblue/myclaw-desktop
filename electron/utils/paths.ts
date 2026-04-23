@@ -126,14 +126,32 @@ export function getPreloadPath(): string {
 }
 
 /**
- * Get OpenClaw package directory
- * - Production (packaged): from resources/openclaw (copied by electron-builder extraResources)
- * - Development: from node_modules/openclaw
+ * Get OpenClaw package directory.
+ *
+ * Packaged resolution order:
+ *  1. ~/.myclaw/runtime/node_modules/openclaw/  — runtime install target,
+ *     populated by ensure_myclaw_runtime_installed() on first launch.
+ *  2. resources/openclaw/ bundled by electron-builder — legacy fallback
+ *     for the transition period before bundle-openclaw.mjs is stripped.
+ *
+ * Dev mode keeps using the workspace-installed openclaw so upstream
+ * changes are picked up immediately without re-running runtime init.
  */
 export function getOpenClawDir(): string {
-  if (getElectronApp().isPackaged) {
+  const packaged = getElectronApp().isPackaged;
+
+  if (packaged) {
+    // Runtime-first: a valid runtime install looks like
+    //   ~/.myclaw/runtime/node_modules/openclaw/package.json
+    // Missing package.json = either never installed, install failed
+    // mid-copy, or user wiped ~/.myclaw — fall back to bundled.
+    const runtimePkg = join(homedir(), '.myclaw', 'runtime', 'node_modules', 'openclaw');
+    if (existsSync(join(runtimePkg, 'package.json'))) {
+      return runtimePkg;
+    }
     return join(process.resourcesPath, 'openclaw');
   }
+
   // Development: prefer build/openclaw (has bundled deps like grammy, @buape/carbon);
   // fall back to node_modules/openclaw if build hasn't run yet or is incomplete.
   const buildDir = join(__dirname, '../../build/openclaw');
