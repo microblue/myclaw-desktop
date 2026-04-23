@@ -229,6 +229,11 @@ Var ForceReinstallOpenClawState
 Var RemoveOpenClawFromCLI
 
 !include nsDialogs.nsh
+; FileFunc.nsh is pulled in by multiUser.nsh, but that happens AFTER our
+; installer.nsh is processed — so ${GetParameters} / ${GetOptions} aren't
+; defined yet when Function forceReinstallOpenClawPageCreate is compiled.
+; Include FileFunc explicitly (it has its own duplicate-include guard).
+!include FileFunc.nsh
 
 !macro customInit
   ; Accept /FORCE_REINSTALL_OPENCLAW as the headless equivalent of ticking
