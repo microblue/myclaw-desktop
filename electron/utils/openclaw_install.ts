@@ -365,7 +365,63 @@ export async function ensure_myclaw_runtime_installed(
     extra_args: extra_npm_args,
   });
 
+  // `npm install openclaw` only places the package files on disk — it does
+  // NOT generate ~/.openclaw/openclaw.json.  Openclaw's own `setup`
+  // subcommand is what creates the default config; without it the
+  // subsequent gateway start fails with "Missing config".
+  //
+  // Spawn `openclaw setup --non-interactive --mode local` once per
+  // install so the bootstrap step is part of our "runtime is ready"
+  // contract.  Idempotent on repeat calls.
+  const openclaw_entry = join(state.runtime_dir, 'node_modules', 'openclaw', 'openclaw.mjs');
+  await run_openclaw_setup({
+    node_binary,
+    openclaw_entry,
+    on_log,
+  });
+
   return { version: state.configured_version, was_installed: true };
+}
+
+interface OpenClawSetupSpec {
+  node_binary: string;
+  openclaw_entry: string;
+  /** Optional override for openclaw's state dir (OPENCLAW_STATE_DIR). */
+  state_dir?: string;
+  on_log?: (line: string) => void;
+}
+
+function run_openclaw_setup(spec: OpenClawSetupSpec): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const args = [
+      spec.openclaw_entry,
+      'setup',
+      '--non-interactive',
+      '--mode', 'local',
+    ];
+    const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: 'production' };
+    if (spec.state_dir) env.OPENCLAW_STATE_DIR = spec.state_dir;
+
+    const child = spawn(spec.node_binary, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env,
+    });
+
+    const pipe_lines = (chunk: Buffer) => {
+      if (!spec.on_log) return;
+      for (const line of chunk.toString().split(/\r?\n/)) {
+        if (line.trim()) spec.on_log(`[setup] ${line}`);
+      }
+    };
+
+    child.stdout?.on('data', pipe_lines);
+    child.stderr?.on('data', pipe_lines);
+    child.on('error', reject);
+    child.on('exit', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`openclaw setup exited with code ${code}`));
+    });
+  });
 }
 
 interface NpmInstallSpec {

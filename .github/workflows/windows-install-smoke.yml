@@ -271,6 +271,50 @@ jobs:
           "entry=$entry" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "LAYER 4a OK: $entry"
 
+      - name: Layer 4a.5 — openclaw setup --non-interactive (bootstrap config)
+        # npm install only places openclaw's files on disk — it does NOT
+        # produce an ~/.openclaw/openclaw.json.  Production MyClaw's
+        # ensure_myclaw_runtime_installed now invokes `openclaw setup
+        # --non-interactive --mode local` right after npm install for
+        # exactly this reason.  Layer 4 mirrors that.
+        id: layer4_setup
+        shell: pwsh
+        run: |
+          $node = "${{ steps.layer2a.outputs.node }}"
+          $entry = "${{ steps.layer4a.outputs.entry }}"
+          $runtime = "${{ steps.layer3.outputs.runtime }}"
+
+          # Isolate state entirely under scratch prefix.  Setup + gateway
+          # will both honour this, keeping the test out of the runner's
+          # real ~/.openclaw/ and out of whatever residue openclaw's
+          # postinstall left there during Layer 3.
+          $stateDir = Join-Path $runtime "openclaw-state"
+          if (Test-Path $stateDir) { Remove-Item -Recurse -Force $stateDir }
+          New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
+          $env:OPENCLAW_STATE_DIR = $stateDir
+          Write-Host "OPENCLAW_STATE_DIR=$stateDir"
+
+          $setupLog = Join-Path $runtime "setup.log"
+          Write-Host "Running: $node $entry setup --non-interactive --mode local"
+          & $node $entry setup --non-interactive --mode local 2>&1 | Tee-Object -FilePath $setupLog
+          $rc = $LASTEXITCODE
+
+          Write-Host ""
+          Write-Host "=== setup.log tail ==="
+          Get-Content $setupLog -Tail 40 -ErrorAction SilentlyContinue
+
+          if ($rc -ne 0) {
+            throw "LAYER 4a.5 FAIL: openclaw setup exited $rc"
+          }
+
+          # Verify the config file openclaw will read at gateway start.
+          $configPath = Join-Path $stateDir "openclaw.json"
+          if (-not (Test-Path $configPath)) {
+            throw "LAYER 4a.5 FAIL: $configPath not created by setup"
+          }
+          Write-Host "LAYER 4a.5 OK: config written to $configPath"
+          "state_dir=$stateDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
       - name: Layer 4b — spawn openclaw gateway, process alive 5s later
         id: layer4b
         shell: pwsh
@@ -278,28 +322,19 @@ jobs:
           $node = "${{ steps.layer2a.outputs.node }}"
           $entry = "${{ steps.layer4a.outputs.entry }}"
           $runtime = "${{ steps.layer3.outputs.runtime }}"
+          $stateDir = "${{ steps.layer4_setup.outputs.state_dir }}"
 
-          # Isolate openclaw state entirely under our scratch prefix so
-          # we are NOT inheriting the runner's ~/.openclaw/ (which may
-          # contain a stale lock file or partial state from openclaw's
-          # own postinstall during Layer 3).  OPENCLAW_STATE_DIR is
-          # openclaw's first-class override for the data directory.
-          $stateDir = Join-Path $runtime "openclaw-state"
-          if (Test-Path $stateDir) { Remove-Item -Recurse -Force $stateDir }
-          New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
+          # Inherit the scratch state dir from Layer 4a.5 so gateway reads
+          # the config setup just produced.  No --allow-unconfigured
+          # needed now — we actually have a config.
           $env:OPENCLAW_STATE_DIR = $stateDir
-          Write-Host "OPENCLAW_STATE_DIR=$stateDir"
 
           $stdoutLog = Join-Path $runtime "gateway-stdout.log"
           $stderrLog = Join-Path $runtime "gateway-stderr.log"
 
-          # --allow-unconfigured lets openclaw gateway start without a
-          # fully-populated openclaw.json.  Production MyClaw does NOT
-          # use this flag — its config-sync writes provider + token +
-          # channels to openclaw.json before spawning.
-          Write-Host "Spawning: $node $entry gateway run --allow-unconfigured"
+          Write-Host "Spawning: $node $entry gateway run (OPENCLAW_STATE_DIR=$stateDir)"
           $gw = Start-Process -FilePath $node `
-                              -ArgumentList $entry, 'gateway', 'run', '--allow-unconfigured' `
+                              -ArgumentList $entry, 'gateway', 'run' `
                               -PassThru `
                               -RedirectStandardOutput $stdoutLog `
                               -RedirectStandardError $stderrLog `
@@ -314,8 +349,7 @@ jobs:
             throw "LAYER 4b FAIL: gateway exited immediately with code $($gw.ExitCode)"
           }
           "pid=$($gw.Id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "state_dir=$stateDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "LAYER 4b OK: pid $($gw.Id) alive after 5s (state dir=$stateDir)"
+          Write-Host "LAYER 4b OK: pid $($gw.Id) alive after 5s"
 
       - name: Layer 4c — gateway binds 18789 within 180s
         shell: pwsh
@@ -323,7 +357,7 @@ jobs:
           # NOTE: $pid is a PowerShell read-only automatic variable — use $gwPid.
           $gwPid = [int]"${{ steps.layer4b.outputs.pid }}"
           $runtime = "${{ steps.layer3.outputs.runtime }}"
-          $stateDir = "${{ steps.layer4b.outputs.state_dir }}"
+          $stateDir = "${{ steps.layer4_setup.outputs.state_dir }}"
           $deadline = (Get-Date).AddSeconds(180)
           $listening = $false
           $exitCode = $null
