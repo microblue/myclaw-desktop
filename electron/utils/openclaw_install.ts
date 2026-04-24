@@ -14,7 +14,8 @@
  * package.json — one MyClaw release == one openclaw version.
  */
 import { spawn } from 'child_process';
-import { mkdirSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync } from 'fs';
+import { homedir } from 'os';
 import { join } from 'path';
 
 export interface TestedCompatibleRange {
@@ -365,33 +366,82 @@ export async function ensure_myclaw_runtime_installed(
     extra_args: extra_npm_args,
   });
 
-  // `npm install openclaw` only places the package files on disk — it does
-  // NOT generate ~/.openclaw/openclaw.json.  Openclaw's own `setup`
-  // subcommand is what creates the default config; without it the
-  // subsequent gateway start fails with "Missing config".
-  //
-  // Spawn `openclaw setup --non-interactive --mode local` once per
-  // install so the bootstrap step is part of our "runtime is ready"
-  // contract.  Idempotent on repeat calls.
-  const openclaw_entry = join(state.runtime_dir, 'node_modules', 'openclaw', 'openclaw.mjs');
-  await run_openclaw_setup({
-    node_binary,
-    openclaw_entry,
-    on_log,
-  });
-
   return { version: state.configured_version, was_installed: true };
 }
 
-interface OpenClawSetupSpec {
+// ── openclaw config bootstrap (onboard) ──────────────────────────────────────
+
+export interface OpenClawOnboardOptions {
+  /** Absolute path to the bundled node binary used to spawn openclaw. */
   node_binary: string;
+  /** Absolute path to openclaw.mjs under the runtime's node_modules. */
   openclaw_entry: string;
-  /** Optional override for openclaw's state dir (OPENCLAW_STATE_DIR). */
+  /**
+   * openclaw state / config directory.  Defaults to `<home>/.openclaw`.
+   * Production MyClaw omits this to use openclaw's standard location;
+   * CI / tests can point it at a scratch dir.
+   */
   state_dir?: string;
   on_log?: (line: string) => void;
 }
 
-function run_openclaw_setup(spec: OpenClawSetupSpec): Promise<void> {
+export interface OpenClawOnboardResult {
+  /** Absolute path to the openclaw.json that exists after this call. */
+  config_path: string;
+  /**
+   * True if we just created the config by spawning `openclaw onboard`;
+   * false if it was already there and we skipped.
+   */
+  was_onboarded: boolean;
+}
+
+/**
+ * Ensure openclaw's own configuration bootstrap has been run.
+ *
+ * Checks for `<state_dir>/openclaw.json`; if missing, spawns
+ * `openclaw onboard --non-interactive --accept-risk --mode local`
+ * (the scriptable equivalent of the interactive `openclaw setup`
+ * wizard — `setup --non-interactive` explicitly redirects to onboard).
+ *
+ * Idempotent: a second call with the config present is a cheap file
+ * existence check.  Keeping the two steps separate (npm install vs
+ * config bootstrap) means a user who deletes ~/.openclaw/ can recover
+ * without reinstalling the runtime — next launch re-onboards.
+ *
+ * After this returns, MyClaw's UI wizard + `syncXxxToOpenClaw`
+ * functions take over for user-level fields (provider / API key /
+ * channels).  This helper never writes user-level data — that's
+ * openclaw's own onboarding defaults plus whatever MyClaw's sync
+ * functions merge in afterwards.
+ */
+export async function ensure_openclaw_onboarded(
+  options: OpenClawOnboardOptions,
+): Promise<OpenClawOnboardResult> {
+  const state_dir = options.state_dir ?? join(homedir(), '.openclaw');
+  const config_path = join(state_dir, 'openclaw.json');
+
+  if (existsSync(config_path)) {
+    return { config_path, was_onboarded: false };
+  }
+
+  await run_openclaw_onboard({
+    node_binary: options.node_binary,
+    openclaw_entry: options.openclaw_entry,
+    state_dir: options.state_dir,
+    on_log: options.on_log,
+  });
+
+  return { config_path, was_onboarded: true };
+}
+
+interface OpenClawOnboardSpec {
+  node_binary: string;
+  openclaw_entry: string;
+  state_dir?: string;
+  on_log?: (line: string) => void;
+}
+
+function run_openclaw_onboard(spec: OpenClawOnboardSpec): Promise<void> {
   return new Promise((resolve, reject) => {
     // `openclaw setup --non-interactive` refuses to run and points at
     // `openclaw onboard --non-interactive --accept-risk` as the correct

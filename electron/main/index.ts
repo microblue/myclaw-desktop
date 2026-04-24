@@ -23,6 +23,8 @@ import { hasResetOpenClawFlag, resetOpenClawData } from '../utils/reset-openclaw
 import {
   check_version_compat,
   ensure_myclaw_runtime_installed,
+  ensure_openclaw_onboarded,
+  get_bundled_node_path,
   get_openclaw_install_state,
   read_openclaw_tested_range,
 } from '../utils/openclaw_install';
@@ -315,28 +317,62 @@ async function initialize(): Promise<void> {
       `[myclaw-runtime] configured=${state.configured_version} current=${state.installed_version ?? 'none'} dir=${state.runtime_dir} needs_init=${state.needs_install}`,
     );
 
-    if (app.isPackaged && state.needs_install) {
-      logger.info('[myclaw-runtime] initializing your MyClaw runtime...');
-      progress = show_runtime_progress_window();
+    if (app.isPackaged) {
+      // Step 1: ensure the runtime bytes are on disk (npm install).
+      // Fast-path when versions match — ensure_myclaw_runtime_installed
+      // returns immediately without spawning anything.
+      if (state.needs_install) {
+        logger.info('[myclaw-runtime] initializing your MyClaw runtime...');
+        progress = show_runtime_progress_window();
 
-      const start_ms = Date.now();
-      const result = await ensure_myclaw_runtime_installed({
-        app_path: app.getAppPath(),
-        home_dir: homedir(),
-        resources_path: process.resourcesPath,
+        const install_start = Date.now();
+        const install_result = await ensure_myclaw_runtime_installed({
+          app_path: app.getAppPath(),
+          home_dir: homedir(),
+          resources_path: process.resourcesPath,
+          on_log: (line) => {
+            logger.info(`[myclaw-runtime] [npm] ${line}`);
+            progress?.append_log(line);
+          },
+        });
+        const install_elapsed = ((Date.now() - install_start) / 1000).toFixed(1);
+        logger.info(
+          `[myclaw-runtime] runtime install complete: ${install_result.version} (${install_elapsed}s)`,
+        );
+      } else {
+        logger.info('[myclaw-runtime] runtime already current');
+      }
+
+      // Step 2: ensure openclaw's own config bootstrap has run.  Separate
+      // from Step 1 so that (a) a user who deletes ~/.openclaw/ recovers
+      // on next launch without reinstalling the runtime, and (b) the
+      // failure modes don't blur together.
+      const node_binary = get_bundled_node_path(process.resourcesPath);
+      const openclaw_entry = join(
+        state.runtime_dir,
+        'node_modules',
+        'openclaw',
+        'openclaw.mjs',
+      );
+      const onboard_start = Date.now();
+      const onboard_result = await ensure_openclaw_onboarded({
+        node_binary,
+        openclaw_entry,
         on_log: (line) => {
-          logger.info(`[myclaw-runtime] ${line}`);
+          logger.info(`[myclaw-runtime] [onboard] ${line}`);
           progress?.append_log(line);
         },
       });
-      const elapsed = ((Date.now() - start_ms) / 1000).toFixed(1);
-      logger.info(
-        `[myclaw-runtime] initialization complete: ${result.version} (${elapsed}s)`,
-      );
-    } else if (!app.isPackaged) {
-      logger.info('[myclaw-runtime] dev mode — using workspace-installed openclaw');
+      if (onboard_result.was_onboarded) {
+        const onboard_elapsed = ((Date.now() - onboard_start) / 1000).toFixed(1);
+        logger.info(
+          `[myclaw-runtime] openclaw onboard complete: ${onboard_result.config_path} (${onboard_elapsed}s)`,
+        );
+      } else {
+        logger.info(`[myclaw-runtime] openclaw already onboarded: ${onboard_result.config_path}`);
+      }
     } else {
-      logger.info('[myclaw-runtime] already current');
+      logger.info('[myclaw-runtime] dev mode — using workspace-installed openclaw');
     }
 
     // Compatibility check: the installed version may be NEWER than the pin
