@@ -58,28 +58,33 @@ const stats = [
 
 const currentVersionText = t('go.currentVersion', { version: DOWNLOAD_VERSION });
 ---
+<!-- Ambient background gradient + grid, fixed to viewport -->
+<div class="landing-gradient pointer-events-none fixed inset-0 z-0"></div>
+
 <!-- Hero -->
 <section class="relative overflow-hidden px-6 pt-24 pb-16">
-    <div class="relative mx-auto max-w-6xl">
+    <div class="landing-grid pointer-events-none absolute inset-0"></div>
+
+    <div class="animate-hero-fade-in relative mx-auto max-w-6xl">
         <div class="flex flex-col items-center text-center">
             <!-- Badge -->
-            <div class="mb-8 inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 shadow-sm">
-                <Icon name="sparkle" class="h-4 w-4 text-indigo-500" />
-                <span class="text-sm text-gray-600">{t('go.badge')}</span>
+            <div class="mb-8 inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 shadow-sm">
+                <Icon name="sparkle" class="h-4 w-4 text-brand" />
+                <span class="text-sm text-foreground/80">{t('go.badge')}</span>
             </div>
 
             <!-- Hero title -->
-            <h1 class="mb-6 text-4xl font-bold leading-[1.08] tracking-tight md:text-6xl lg:text-7xl">
-                <span class="bg-gradient-to-b from-gray-900 via-gray-800 to-gray-500 bg-clip-text text-transparent">
+            <h1 class="font-display mb-6 text-4xl font-bold leading-[1.08] tracking-tight md:text-6xl lg:text-7xl">
+                <span class="bg-gradient-to-b from-foreground via-foreground to-muted-foreground bg-clip-text text-transparent">
                     {t('go.heroTitle1')}
                 </span>
                 <br />
-                <span class="bg-gradient-to-r from-indigo-600 via-indigo-400 to-indigo-300 bg-clip-text text-transparent">
+                <span class="animate-gradient bg-gradient-to-r from-[#6366f1] via-[#818cf8] to-[#a5b4fc] bg-clip-text text-transparent">
                     {t('go.heroTitle2')}
                 </span>
             </h1>
 
-            <p class="mb-10 max-w-2xl text-base leading-relaxed text-gray-600 md:text-lg">
+            <p class="mb-10 max-w-2xl text-base leading-relaxed text-muted-foreground md:text-lg">
                 {t('go.description')}
             </p>
 
@@ -95,14 +100,13 @@ const currentVersionText = t('go.currentVersion', { version: DOWNLOAD_VERSION })
                                     'group flex flex-col items-start gap-2.5 rounded-xl border p-3.5 transition-all duration-150',
                                     dl.featured
                                         ? 'border-indigo-500/40 bg-indigo-500/10 hover:border-indigo-400/60 hover:bg-indigo-500/15'
-                                        : 'border-gray-200 bg-gray-50 hover:border-gray-300 hover:bg-gray-100',
+                                        : 'border-white/10 bg-white/[0.04] hover:border-white/20 hover:bg-white/[0.07]',
                                 ]}
                             >
                                 <div class:list={[
                                     'flex h-8 w-8 items-center justify-center rounded-lg',
-                                    dl.featured ? 'bg-indigo-500/20 text-indigo-500' : 'bg-gray-200 text-gray-600',
+                                    dl.featured ? 'bg-indigo-500/20 text-indigo-300' : 'bg-white/10 text-white/60',
                                 ]}>
-                                    <!-- Platform icon -->
                                     {dl.platform === 'Windows' ? (
                                         <svg viewBox="0 0 24 24" class="h-5 w-5" fill="currentColor" aria-hidden="true">
                                             <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/>
@@ -117,29 +121,29 @@ const currentVersionText = t('go.currentVersion', { version: DOWNLOAD_VERSION })
                                     <div>
                                         <div class:list={[
                                             'text-sm font-semibold leading-tight',
-                                            dl.featured ? 'text-gray-900' : 'text-gray-700',
+                                            dl.featured ? 'text-white' : 'text-white/80',
                                         ]}>
                                             {dl.platform}
                                         </div>
-                                        <div class="mt-0.5 text-xs leading-tight text-gray-500">
+                                        <div class="mt-0.5 text-xs leading-tight text-white/40">
                                             {dl.sublabel}
                                         </div>
                                     </div>
                                     <Icon name="download-simple" class:list={[
                                         'mb-0.5 h-3.5 w-3.5 shrink-0 transition-transform group-hover:translate-y-0.5',
-                                        dl.featured ? 'text-indigo-500' : 'text-gray-400',
+                                        dl.featured ? 'text-indigo-400' : 'text-white/30',
                                     ]} />
                                 </div>
                             </a>
                         ))}
                     </div>
-                    <p class="text-xs text-gray-500">
+                    <p class="text-xs text-muted-foreground">
                         {currentVersionText} ·{' '}
-                        <a href="/changelog/" class="underline underline-offset-2 transition-colors hover:text-gray-900">
+                        <a href="/changelog/" class="underline underline-offset-2 transition-colors hover:text-foreground">
                             What&rsquo;s new
                         </a>{' '}
                         ·{' '}
-                        <a href="https://github.com/microblue/myclaw-desktop-releases/releases" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 transition-colors hover:text-gray-900">
+                        <a href="https://github.com/microblue/myclaw-desktop-releases/releases" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 transition-colors hover:text-foreground">
                             {t('go.allReleases')}
                         </a>
                     </p>
@@ -150,10 +154,10 @@ const currentVersionText = t('go.currentVersion', { version: DOWNLOAD_VERSION })
             <div class="grid grid-cols-2 gap-6 text-center md:flex md:items-center md:gap-16">
                 {stats.map((stat, index) => (
                     <div class="contents">
-                        {index > 0 && <div class="hidden h-12 w-px bg-gray-200 md:block" />}
+                        {index > 0 && <div class="hidden h-12 w-px bg-muted md:block" />}
                         <div>
-                            <div class="text-3xl font-bold text-gray-900 md:text-4xl">{stat.value}</div>
-                            <div class="text-sm text-gray-500">{stat.label}</div>
+                            <div class="font-display text-3xl font-bold text-foreground md:text-4xl">{stat.value}</div>
+                            <div class="text-sm text-muted-foreground">{stat.label}</div>
                         </div>
                     </div>
                 ))}
@@ -163,28 +167,28 @@ const currentVersionText = t('go.currentVersion', { version: DOWNLOAD_VERSION })
 </section>
 
 <!-- Features -->
-<section id="features" class="relative scroll-mt-24 border-t border-gray-200 px-6 py-24">
+<section id="features" class="relative scroll-mt-24 border-t border-border px-6 py-24">
     <div class="mx-auto max-w-6xl">
         <div class="mb-16 text-center">
-            <span class="mb-4 inline-flex items-center rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-600 shadow-sm">
+            <span class="mb-4 inline-flex items-center rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-foreground/80 shadow-sm">
                 {t('go.features')}
             </span>
-            <h2 class="mb-4 bg-gradient-to-b from-gray-900 to-gray-500 bg-clip-text text-4xl font-bold text-transparent md:text-5xl">
+            <h2 class="font-display mb-4 bg-gradient-to-b from-foreground to-muted-foreground bg-clip-text text-4xl font-bold text-transparent md:text-5xl">
                 {t('go.whyMyClawGo')}
             </h2>
-            <p class="mx-auto max-w-xl text-lg text-gray-600">
+            <p class="mx-auto max-w-xl text-lg text-muted-foreground">
                 {t('go.featuresDescription')}
             </p>
         </div>
 
         <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {features.map((feature) => (
-                <div class="rounded-xl border border-gray-200 bg-gray-50/40 p-6">
-                    <Icon name={feature.icon as any} class="mb-4 h-8 w-8 text-indigo-500" />
-                    <h3 class="mb-2 text-lg font-semibold text-gray-900">
+                <div class="rounded-xl border border-border bg-white/[0.02] p-6">
+                    <Icon name={feature.icon as any} class="mb-4 h-8 w-8 text-indigo-400" />
+                    <h3 class="font-display mb-2 text-lg font-semibold text-foreground">
                         {feature.title}
                     </h3>
-                    <p class="text-sm leading-relaxed text-gray-600">
+                    <p class="text-sm leading-relaxed text-muted-foreground">
                         {feature.description}
                     </p>
                 </div>
@@ -194,51 +198,51 @@ const currentVersionText = t('go.currentVersion', { version: DOWNLOAD_VERSION })
 </section>
 
 <!-- Comparison table -->
-<section id="comparison" class="relative scroll-mt-24 border-t border-gray-200 px-6 py-24">
+<section id="comparison" class="relative scroll-mt-24 border-t border-border px-6 py-24">
     <div class="mx-auto max-w-3xl">
         <div class="mb-16 text-center">
-            <span class="mb-4 inline-flex items-center rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-600 shadow-sm">
+            <span class="mb-4 inline-flex items-center rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-foreground/80 shadow-sm">
                 {t('go.comparison')}
             </span>
-            <h2 class="mb-4 bg-gradient-to-b from-gray-900 to-gray-500 bg-clip-text text-4xl font-bold text-transparent md:text-5xl">
+            <h2 class="font-display mb-4 bg-gradient-to-b from-foreground to-muted-foreground bg-clip-text text-4xl font-bold text-transparent md:text-5xl">
                 {t('go.comparisonTitle')}
             </h2>
-            <p class="mx-auto max-w-xl text-lg text-gray-600">
+            <p class="mx-auto max-w-xl text-lg text-muted-foreground">
                 {t('go.comparisonDescription')}
             </p>
         </div>
 
-        <div class="overflow-hidden rounded-xl border border-gray-200">
+        <div class="overflow-hidden rounded-xl border border-border">
             <table class="w-full">
                 <thead>
-                    <tr class="border-b border-gray-200 bg-gray-50">
+                    <tr class="border-b border-border bg-white/[0.02]">
                         <th class="px-6 py-4">
                             <div class="flex items-center justify-center gap-2">
-                                <span class="text-base font-bold text-gray-900">
+                                <span class="font-display text-base font-bold text-foreground">
                                     {t('common.brandName')} Desktop
                                 </span>
                             </div>
                         </th>
                         <th class="px-6 py-4 text-center">
-                            <span class="font-medium text-gray-500">
+                            <span class="font-medium text-muted-foreground">
                                 {t('landing.others')}
                             </span>
                         </th>
                     </tr>
                 </thead>
-                <tbody class="divide-y divide-gray-200">
+                <tbody class="divide-y divide-border">
                     {comparisonRows.map((row, index) => (
-                        <tr class:list={[index % 2 !== 0 ? 'bg-gray-50/40' : '']}>
+                        <tr class:list={[index % 2 !== 0 ? 'bg-white/[0.01]' : '']}>
                             <td class="px-6 py-4">
                                 <div class="flex items-center gap-3">
-                                    <Icon name="check" class="h-5 w-5 flex-shrink-0 text-green-600" />
-                                    <span class="text-gray-900">{row.us}</span>
+                                    <Icon name="check" class="h-5 w-5 flex-shrink-0 text-green-400" />
+                                    <span class="text-foreground">{row.us}</span>
                                 </div>
                             </td>
                             <td class="px-6 py-4">
                                 <div class="flex items-center gap-3">
-                                    <Icon name="x" class="h-5 w-5 flex-shrink-0 text-red-500" />
-                                    <span class="text-gray-500">{row.others}</span>
+                                    <Icon name="x" class="h-5 w-5 flex-shrink-0 text-red-400" />
+                                    <span class="text-muted-foreground">{row.others}</span>
                                 </div>
                             </td>
                         </tr>
@@ -250,29 +254,29 @@ const currentVersionText = t('go.currentVersion', { version: DOWNLOAD_VERSION })
 </section>
 
 <!-- FAQ -->
-<section id="faq" class="relative scroll-mt-24 border-t border-gray-200 px-6 py-24">
+<section id="faq" class="relative scroll-mt-24 border-t border-border px-6 py-24">
     <div class="mx-auto max-w-3xl">
         <div class="mb-16 text-center">
-            <span class="mb-4 inline-flex items-center rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-600 shadow-sm">
+            <span class="mb-4 inline-flex items-center rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-foreground/80 shadow-sm">
                 {t('go.faqTitle')}
             </span>
-            <h2 class="mb-4 bg-gradient-to-b from-gray-900 to-gray-500 bg-clip-text text-4xl font-bold text-transparent md:text-5xl">
+            <h2 class="font-display mb-4 bg-gradient-to-b from-foreground to-muted-foreground bg-clip-text text-4xl font-bold text-transparent md:text-5xl">
                 {t('go.faqHeading')}
             </h2>
-            <p class="mx-auto max-w-xl text-lg text-gray-600">
+            <p class="mx-auto max-w-xl text-lg text-muted-foreground">
                 {t('go.faqDescription')}
             </p>
         </div>
 
         <div class="space-y-3">
             {faqs.map((faq) => (
-                <details class="group overflow-hidden rounded-xl border border-gray-200 bg-gray-50/40">
-                    <summary class="flex w-full cursor-pointer items-center justify-between p-5 text-left transition-colors hover:bg-gray-100/60 [&::-webkit-details-marker]:hidden">
-                        <span class="pr-4 font-medium text-gray-900">{faq.question}</span>
-                        <Icon name="caret-down" class="h-5 w-5 flex-shrink-0 text-gray-500 transition-transform duration-200 group-open:rotate-180" />
+                <details class="group overflow-hidden rounded-xl border border-border bg-white/[0.02]">
+                    <summary class="flex w-full cursor-pointer items-center justify-between p-5 text-left transition-colors hover:bg-white/[0.04] [&::-webkit-details-marker]:hidden">
+                        <span class="pr-4 font-medium text-foreground">{faq.question}</span>
+                        <Icon name="caret-down" class="h-5 w-5 flex-shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-180" />
                     </summary>
                     <div class="px-5 pb-5">
-                        <p class="leading-relaxed text-gray-600">{faq.answer}</p>
+                        <p class="leading-relaxed text-muted-foreground">{faq.answer}</p>
                     </div>
                 </details>
             ))}
@@ -281,11 +285,11 @@ const currentVersionText = t('go.currentVersion', { version: DOWNLOAD_VERSION })
 </section>
 
 <!-- CTA -->
-<section class="relative border-t border-gray-200 px-6 py-32">
+<section class="relative border-t border-border px-6 py-32">
     <div class="mx-auto max-w-4xl text-center">
-        <div class="rounded-2xl border border-gray-200 bg-gradient-to-b from-gray-50 to-transparent px-6 py-12">
-            <h2 class="mb-4 text-3xl font-bold">{t('go.ctaTitle')}</h2>
-            <p class="mx-auto mb-8 max-w-xl text-base text-gray-600">
+        <div class="rounded-2xl border border-border/50 bg-gradient-to-b from-white/[0.03] to-transparent px-6 py-12">
+            <h2 class="font-display mb-4 text-3xl font-bold">{t('go.ctaTitle')}</h2>
+            <p class="mx-auto mb-8 max-w-xl text-base text-muted-foreground">
                 {t('go.ctaDescription')}
             </p>
             <div class="flex flex-col items-center justify-center gap-4 sm:flex-row">

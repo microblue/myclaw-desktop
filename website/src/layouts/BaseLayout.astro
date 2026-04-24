@@ -28,7 +28,7 @@ const labels = {
 const l = labels[lang];
 ---
 <!doctype html>
-<html lang={lang === 'zh' ? 'zh-CN' : 'en'}>
+<html lang={lang === 'zh' ? 'zh-CN' : 'en'} class="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -44,13 +44,13 @@ const l = labels[lang];
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
   </head>
-  <body class="bg-white text-gray-900 antialiased">
-    <nav class="sticky top-0 z-50 border-b border-gray-200 bg-white/90 backdrop-blur">
+  <body class="bg-background text-foreground antialiased">
+    <nav class="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur">
       <div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
-        <a href="https://myclaw.one" class="text-sm font-medium text-gray-600 hover:text-gray-900">
+        <a href="https://myclaw.one" class="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
           ← {l.backToMyClaw}
         </a>
-        <a href={l.switchLangPath} class="text-sm text-gray-600 hover:text-gray-900">
+        <a href={l.switchLangPath} class="text-sm text-muted-foreground transition-colors hover:text-foreground">
           {l.switchLang}
         </a>
       </div>
@@ -58,7 +58,7 @@ const l = labels[lang];
     <main>
       <slot />
     </main>
-    <footer class="border-t border-gray-200 py-8 text-center text-sm text-gray-500">
+    <footer class="border-t border-border py-8 text-center text-sm text-muted-foreground">
       <p>© 2026 MyClaw.One · Desktop</p>
     </footer>
   </body>
