@@ -486,29 +486,44 @@ jobs:
           }
           "pid=$gwPid" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - name: Launch installed app (sanity check binary boots)
+      # ── MERGED Launch + Wait + Probe ─────────────────────────────────────────
+      # Previously three separate steps.  If Electron (or any child it
+      # spawns) were in a CI step Job Object we'd lose them across step
+      # boundaries — same pattern that killed Layer 4b's gateway.  Merge
+      # into one step so the app + its spawned gateway stay inside the
+      # same pwsh session's Job Object for the full observation window.
+      # Also upgrades diagnostics: mid-wait status snapshots so we know
+      # WHERE MyClaw is stuck when things go wrong (runtime install
+      # running? config written? gateway spawn in progress?).
+
+      - name: Launch MyClaw + wait for gateway 18789 + HTTP probe
         shell: pwsh
         run: |
           $exe = "${{ steps.install-path.outputs.exe }}"
+          Write-Host "Launching: $exe"
           Start-Process -FilePath $exe -ArgumentList ''
           Start-Sleep -Seconds 5
-          $procs = Get-Process -Name "MyClaw.One" -ErrorAction SilentlyContinue
-          if (-not $procs) {
-            throw "MyClaw.One process did not launch"
-          }
-          Write-Host "Process running; PID(s): $($procs.Id -join ', ')"
 
-      - name: Wait for Gateway port 18789
-        shell: pwsh
-        run: |
-          # First-run on Windows frequently takes ~2 min: a handshake timeout
-          # after the initial Gateway process spawn forces a restart, and the
-          # second spawn is the one that actually binds. 420s covers the
-          # worst case we've observed on windows-latest.
-          $totalWaitSec = 420
+          $myclaw = Get-Process -Name "MyClaw.One" -ErrorAction SilentlyContinue
+          if (-not $myclaw) { throw "MyClaw.One process did not launch" }
+          Write-Host "MyClaw PID: $($myclaw[0].Id)"
+
+          # Candidate paths where MyClaw writes files during init.  These
+          # act as milestones: if <userProfile>\.myclaw\runtime\node_modules
+          # \openclaw\ appears, Step 1 (runtime install) completed.  If
+          # <userProfile>\.openclaw\openclaw.json appears, Step 2 (onboard)
+          # completed.  If port 18789 listens, gateway auto-start succeeded.
+          $runtimeNM = Join-Path $env:USERPROFILE ".myclaw\runtime\node_modules\openclaw\package.json"
+          $openclawCfg = Join-Path $env:USERPROFILE ".openclaw\openclaw.json"
+          # Electron userData defaults to %APPDATA%\<productName>; productName is MyClaw.One
+          $appLogs = Join-Path $env:APPDATA "MyClaw.One\logs"
+
+          $totalWaitSec = 900
           $start = Get-Date
           $deadline = $start.AddSeconds($totalWaitSec)
           $found = $false
+          $lastSnapshot = Get-Date
+
           while ((Get-Date) -lt $deadline) {
             $conn = Get-NetTCPConnection -LocalPort 18789 -State Listen -ErrorAction SilentlyContinue
             if ($conn) {
@@ -517,20 +532,82 @@ jobs:
               $found = $true
               break
             }
+
+            # Every 30s: print milestone snapshot so we know where MyClaw is
+            if (((Get-Date) - $lastSnapshot).TotalSeconds -ge 30) {
+              $lastSnapshot = Get-Date
+              $elapsed = [int]((Get-Date) - $start).TotalSeconds
+              $procs = Get-Process | Where-Object { $_.ProcessName -match "MyClaw|openclaw|node|npm" } |
+                       Select-Object Id, ProcessName, CPU
+              $stage = @(
+                "[${elapsed}s] MyClaw alive=$(if (Get-Process -Id $myclaw[0].Id -EA SilentlyContinue) {'yes'} else {'NO'})",
+                "runtime_installed=$(Test-Path $runtimeNM)",
+                "openclaw_onboarded=$(Test-Path $openclawCfg)",
+                "myclaw_logs_dir=$(Test-Path $appLogs)",
+                "procs=$(($procs.ProcessName -join ',') -replace '^$','<none>')"
+              ) -join '; '
+              Write-Host $stage
+            }
+
             Start-Sleep -Seconds 3
           }
+
+          # Always dump final state before pass/fail verdict
+          Write-Host ""
+          Write-Host "=== Final processes ==="
+          Get-Process | Where-Object { $_.ProcessName -match "MyClaw|openclaw|node|npm" } |
+            Format-Table Id, ProcessName, CPU, StartTime
+
+          Write-Host ""
+          Write-Host "=== ~\.myclaw\runtime tree (first 30) ==="
+          $myclawRuntime = Join-Path $env:USERPROFILE ".myclaw\runtime"
+          if (Test-Path $myclawRuntime) {
+            Get-ChildItem $myclawRuntime -Recurse -Depth 3 -Force -EA SilentlyContinue |
+              Select-Object -First 30 | Format-Table FullName, Length
+          } else {
+            Write-Host "(not present — Step 1 ensure_myclaw_runtime_installed never wrote here)"
+          }
+
+          Write-Host ""
+          Write-Host "=== ~\.openclaw tree (first 30) ==="
+          $homeOpenclaw = Join-Path $env:USERPROFILE ".openclaw"
+          if (Test-Path $homeOpenclaw) {
+            Get-ChildItem $homeOpenclaw -Recurse -Depth 3 -Force -EA SilentlyContinue |
+              Select-Object -First 30 | Format-Table FullName, Length
+          }
+
+          Write-Host ""
+          Write-Host "=== %APPDATA%\MyClaw.One tree (first 30) ==="
+          $userData = Join-Path $env:APPDATA "MyClaw.One"
+          if (Test-Path $userData) {
+            Get-ChildItem $userData -Recurse -Depth 3 -Force -EA SilentlyContinue |
+              Select-Object -First 30 | Format-Table FullName, Length
+          } else {
+            Write-Host "(userData dir missing — Electron never wrote here)"
+          }
+
+          # Tail MyClaw log(s) if any
+          foreach ($dir in @($appLogs, (Join-Path $env:APPDATA "myclaw-desktop\logs"), (Join-Path $env:LOCALAPPDATA "MyClaw.One\logs"))) {
+            if (Test-Path $dir) {
+              $latest = Get-ChildItem $dir -Filter "*.log" -File -EA SilentlyContinue |
+                        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+              if ($latest) {
+                Write-Host ""
+                Write-Host "=== Tail of $($latest.FullName) ==="
+                Get-Content $latest.FullName -Tail 200
+              }
+            }
+          }
+
           if (-not $found) {
             throw "gateway port 18789 is not listening after ${totalWaitSec}s"
           }
 
-      - name: Probe Gateway HTTP
-        shell: pwsh
-        run: |
+          # HTTP probe — folded in so we don't cross another step boundary
           try {
             $r = Invoke-WebRequest -Uri 'http://127.0.0.1:18789/' -TimeoutSec 10 -UseBasicParsing
             Write-Host "Gateway HTTP status: $($r.StatusCode)"
           } catch {
-            # 404 / unauthorised are fine — we only care that something is serving
             Write-Host "Gateway HTTP probe (non-2xx is OK for smoke): $_"
           }
 
