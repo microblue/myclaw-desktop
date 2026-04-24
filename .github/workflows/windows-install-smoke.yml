@@ -322,24 +322,38 @@ jobs:
           $stdoutLog = Join-Path $runtime "gateway-stdout.log"
           $stderrLog = Join-Path $runtime "gateway-stderr.log"
 
-          Write-Host "Spawning: $node $entry gateway run (OPENCLAW_STATE_DIR=$stateDir)"
+          # --verbose surfaces openclaw's internal boot steps (plugin
+          # loading, migrations, etc.) so we can see what runs during
+          # the silent window between 'auth token saved' and either
+          # 'canvas host mounted' or 'listening on 18789'.  On Linux
+          # that window is ~70ms; on Windows CI it's been ~3.7s before
+          # a silent process.exit() that leaves stdout/stderr empty
+          # beyond the auth-token log.
+          Write-Host "Spawning: $node $entry gateway run --verbose (OPENCLAW_STATE_DIR=$stateDir)"
           $gw = Start-Process -FilePath $node `
-                              -ArgumentList $entry, 'gateway', 'run' `
+                              -ArgumentList $entry, 'gateway', 'run', '--verbose' `
                               -PassThru `
                               -RedirectStandardOutput $stdoutLog `
                               -RedirectStandardError $stderrLog `
                               -WorkingDirectory $runtime
-          Start-Sleep -Seconds 5
+          # Bumped from 5s to 12s: on prior runs gateway stayed alive
+          # well past 5s (so 4b passed) but died before 4c's first
+          # poll at ~8s.  12s catches the death inside 4b where the
+          # stdout/stderr dump already happens on failure.
+          Start-Sleep -Seconds 12
 
           if ($gw.HasExited) {
-            Write-Host "=== gateway stdout ==="
+            Write-Host "=== gateway stdout (full) ==="
             Get-Content $stdoutLog -ErrorAction SilentlyContinue
-            Write-Host "=== gateway stderr ==="
+            Write-Host ""
+            Write-Host "=== gateway stderr (full) ==="
             Get-Content $stderrLog -ErrorAction SilentlyContinue
-            throw "LAYER 4b FAIL: gateway exited immediately with code $($gw.ExitCode)"
+            Write-Host ""
+            Write-Host "=== gateway exit code: $($gw.ExitCode) ==="
+            throw "LAYER 4b FAIL: gateway exited during 12s alive window (exit $($gw.ExitCode))"
           }
           "pid=$($gw.Id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "LAYER 4b OK: pid $($gw.Id) alive after 5s"
+          Write-Host "LAYER 4b OK: pid $($gw.Id) alive after 12s"
 
       - name: Layer 4c — gateway binds 18789 within 180s
         shell: pwsh
