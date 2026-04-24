@@ -160,8 +160,15 @@ jobs:
       # plugins are the blocker.  Both use the exact flag set MyClaw's runtime
       # init uses.
 
-      - name: Layer 3a — install openclaw alone into scratch prefix
-        id: layer3a
+      - name: Layer 3 — install openclaw + preinstalled_plugins (single npm invocation)
+        # MONOLITHIC install mirroring exactly what ensure_myclaw_runtime_installed
+        # does at MyClaw's first-launch.  Previously this was split into 3a
+        # (openclaw alone) + 3b (plugins after) — but npm prunes "extraneous"
+        # packages on each `install` invocation and the plugins declare
+        # openclaw as peerDependencies only, not dependencies, so the 3b step
+        # kept deleting openclaw.  Production code avoids this by listing
+        # everything in a single argv; this layer now matches that shape.
+        id: layer3
         shell: pwsh
         run: |
           $node = "${{ steps.layer2a.outputs.node }}"
@@ -169,61 +176,21 @@ jobs:
 
           $pkg = Get-Content "$env:GITHUB_WORKSPACE\package.json" -Raw | ConvertFrom-Json
           $openclawVersion = $pkg.available_backends.openclaw.version
-          Write-Host "Configured openclaw version: $openclawVersion"
+          $plugins = $pkg.available_backends.openclaw.preinstalled_plugins
+
+          $specs = @("openclaw@$openclawVersion")
+          if ($plugins) {
+            $plugins.PSObject.Properties | ForEach-Object {
+              $specs += "$($_.Name)@$($_.Value)"
+            }
+          }
+          Write-Host "Install specs: $($specs -join ', ')"
 
           $prefix = "C:\TEMP\layer3-verify"
           if (Test-Path $prefix) { Remove-Item -Recurse -Force $prefix }
           New-Item -ItemType Directory -Force -Path $prefix | Out-Null
 
-          $log = Join-Path $prefix "install-openclaw.log"
-          $args = @(
-            $npm, 'install', "openclaw@$openclawVersion",
-            '--prefix', $prefix,
-            '--no-save', '--package-lock=false',
-            '--legacy-peer-deps', '--omit=dev'
-          )
-          Write-Host "Running: $node $($args -join ' ')"
-          & $node @args 2>&1 | Tee-Object -FilePath $log
-          $rc = $LASTEXITCODE
-
-          Write-Host ""
-          Write-Host "=== install-openclaw.log tail ==="
-          Get-Content $log -Tail 60 -ErrorAction SilentlyContinue
-
-          if ($rc -ne 0) { throw "LAYER 3a FAIL: openclaw-only install exited $rc" }
-
-          $installedPkg = Join-Path $prefix "node_modules\openclaw\package.json"
-          if (-not (Test-Path $installedPkg)) { throw "LAYER 3a FAIL: openclaw/package.json absent" }
-          $installedVer = (Get-Content $installedPkg -Raw | ConvertFrom-Json).version
-          "runtime=$prefix" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "openclaw_version=$installedVer" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "LAYER 3a OK: openclaw $installedVer installed"
-
-      - name: Layer 3b — install preinstalled_plugins alongside openclaw
-        # The package.json `available_backends.openclaw.preinstalled_plugins`
-        # map lists the four channel plugin npm packages that MyClaw first-
-        # launch installs.  If any of them are private / not on the public
-        # registry / version-unresolvable, this step surfaces it cleanly.
-        shell: pwsh
-        run: |
-          $node = "${{ steps.layer2a.outputs.node }}"
-          $npm  = "${{ steps.layer2c.outputs.npm }}"
-          $prefix = "${{ steps.layer3a.outputs.runtime }}"
-
-          $pkg = Get-Content "$env:GITHUB_WORKSPACE\package.json" -Raw | ConvertFrom-Json
-          $plugins = $pkg.available_backends.openclaw.preinstalled_plugins
-          if (-not $plugins) {
-            Write-Host "LAYER 3b SKIP: preinstalled_plugins map is empty"
-            exit 0
-          }
-
-          $specs = @()
-          $plugins.PSObject.Properties | ForEach-Object {
-            $specs += "$($_.Name)@$($_.Value)"
-          }
-          Write-Host "Preinstalled plugin specs: $($specs -join ', ')"
-
-          $log = Join-Path $prefix "install-plugins.log"
+          $log = Join-Path $prefix "install.log"
           $args = @($npm, 'install') + $specs + @(
             '--prefix', $prefix,
             '--no-save', '--package-lock=false',
@@ -234,21 +201,36 @@ jobs:
           $rc = $LASTEXITCODE
 
           Write-Host ""
-          Write-Host "=== install-plugins.log tail ==="
+          Write-Host "=== install.log tail (last 80 lines) ==="
           Get-Content $log -Tail 80 -ErrorAction SilentlyContinue
 
           if ($rc -ne 0) {
-            throw "LAYER 3b FAIL: preinstalled_plugins install exited $rc (check registry access / package names)"
+            throw "LAYER 3 FAIL: monolithic npm install exited $rc"
           }
 
-          foreach ($p in $plugins.PSObject.Properties.Name) {
-            $pathParts = $p -split '/'
-            $installed = Join-Path $prefix ("node_modules\" + ($pathParts -join '\') + "\package.json")
-            if (-not (Test-Path $installed)) {
-              throw "LAYER 3b FAIL: plugin ${p} did not land at ${installed}"
-            }
+          # Assert openclaw landed
+          $openclawPkg = Join-Path $prefix "node_modules\openclaw\package.json"
+          if (-not (Test-Path $openclawPkg)) {
+            throw "LAYER 3 FAIL: openclaw/package.json absent after install"
           }
-          Write-Host "LAYER 3b OK: $($plugins.PSObject.Properties.Count) plugin(s) installed alongside openclaw"
+          $installedVer = (Get-Content $openclawPkg -Raw | ConvertFrom-Json).version
+
+          # Assert each plugin landed
+          if ($plugins) {
+            foreach ($p in $plugins.PSObject.Properties.Name) {
+              $pathParts = $p -split '/'
+              $installed = Join-Path $prefix ("node_modules\" + ($pathParts -join '\') + "\package.json")
+              if (-not (Test-Path $installed)) {
+                throw "LAYER 3 FAIL: plugin ${p} did not land at ${installed}"
+              }
+            }
+            Write-Host "LAYER 3 OK: openclaw $installedVer + $($plugins.PSObject.Properties.Count) plugin(s) co-installed"
+          } else {
+            Write-Host "LAYER 3 OK: openclaw $installedVer installed (no preinstalled_plugins declared)"
+          }
+
+          "runtime=$prefix" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "openclaw_version=$installedVer" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       # ── Layer 4: openclaw gateway starts from the scratch runtime ────────────
 
@@ -256,7 +238,7 @@ jobs:
         id: layer4a
         shell: pwsh
         run: |
-          $runtime = "${{ steps.layer3a.outputs.runtime }}"
+          $runtime = "${{ steps.layer3.outputs.runtime }}"
           $openclawDir = Join-Path $runtime "node_modules\openclaw"
           $entry = Join-Path $openclawDir "openclaw.mjs"
 
@@ -295,7 +277,7 @@ jobs:
         run: |
           $node = "${{ steps.layer2a.outputs.node }}"
           $entry = "${{ steps.layer4a.outputs.entry }}"
-          $runtime = "${{ steps.layer3a.outputs.runtime }}"
+          $runtime = "${{ steps.layer3.outputs.runtime }}"
 
           $stdoutLog = Join-Path $runtime "gateway-stdout.log"
           $stderrLog = Join-Path $runtime "gateway-stderr.log"
@@ -323,7 +305,7 @@ jobs:
         shell: pwsh
         run: |
           $pid = [int]"${{ steps.layer4b.outputs.pid }}"
-          $runtime = "${{ steps.layer3a.outputs.runtime }}"
+          $runtime = "${{ steps.layer3.outputs.runtime }}"
           $deadline = (Get-Date).AddSeconds(180)
           $listening = $false
 
