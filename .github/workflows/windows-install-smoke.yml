@@ -373,8 +373,21 @@ jobs:
           Write-Host "LAYER 4a.5 OK: minimal config written (gateway.mode=local)"
           "state_dir=$stateDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - name: Layer 4b — spawn openclaw gateway, process alive 5s later
-        id: layer4b
+      # ── Layer 4b+4c MERGED ───────────────────────────────────────────────────
+      # Previously split into 4b (spawn + alive) and 4c (bind + diagnostics).
+      # The split caused a Windows-specific failure: the spawned gateway
+      # process appears to be caught in the CI runner's step-scoped Job
+      # Object, so when Layer 4b's pwsh session exits the gateway is
+      # cascade-killed via TerminateProcess — which bypasses all Node
+      # exit handlers (no EXIT, no BEFORE_EXIT, no signal, no
+      # process.exit caller).  The exit-trace preload confirmed this:
+      # "[exit-trace] preload installed, pid=X" printed, but no exit
+      # event for either the gateway or its config-writer child.
+      # Merging spawn + wait into one step keeps the gateway in the
+      # same Job Object until we're done observing it.
+
+      - name: Layer 4 — gateway spawn + bind 18789 within 180s
+        id: layer4
         shell: pwsh
         run: |
           $node = "${{ steps.layer2a.outputs.node }}"
@@ -382,90 +395,45 @@ jobs:
           $runtime = "${{ steps.layer3.outputs.runtime }}"
           $stateDir = "${{ steps.layer4_setup.outputs.state_dir }}"
 
-          # Inherit the scratch state dir from Layer 4a.5 so gateway reads
-          # the config setup just produced.  No --allow-unconfigured
-          # needed now — we actually have a config.
           $env:OPENCLAW_STATE_DIR = $stateDir
 
-          # Force any swallowed error to the surface.  Prior runs with
-          # NODE_OPTIONS alone produced no extra stderr, suggesting
-          # either the env var wasn't propagated OR the exit is a
-          # clean process.exit() (no uncaught exception).  Use a
-          # --require preload (committed at .github/workflows/
-          # exit-trace.cjs) that hooks every possible exit path and
-          # writes to stderr via fs.writeSync — bypassing the default
-          # stream buffering that eats last-gasp logs.  The preload
-          # also wraps process.exit() so any clean-exit caller is
-          # visible with its stack.
           $preload = Join-Path $env:GITHUB_WORKSPACE ".github\workflows\exit-trace.cjs"
           if (-not (Test-Path $preload)) {
             throw "exit-trace preload missing at $preload"
           }
-          Write-Host "Using exit-trace preload: $preload"
 
           $stdoutLog = Join-Path $runtime "gateway-stdout.log"
           $stderrLog = Join-Path $runtime "gateway-stderr.log"
 
-          # --verbose surfaces openclaw's internal boot steps (plugin
-          # loading, migrations, etc.) so we can see what runs during
-          # the silent window between 'auth token saved' and either
-          # 'canvas host mounted' or 'listening on 18789'.  On Linux
-          # that window is ~70ms; on Windows CI it's been ~3.7s before
-          # a silent process.exit() that leaves stdout/stderr empty
-          # beyond the auth-token log.
-          Write-Host "Spawning: $node --require $preload $entry gateway run --verbose (OPENCLAW_STATE_DIR=$stateDir)"
+          Write-Host "Spawning: $node --require $preload $entry gateway run --verbose"
+          Write-Host "  OPENCLAW_STATE_DIR=$stateDir"
           $gw = Start-Process -FilePath $node `
                               -ArgumentList '--require', $preload, $entry, 'gateway', 'run', '--verbose' `
                               -PassThru `
                               -RedirectStandardOutput $stdoutLog `
                               -RedirectStandardError $stderrLog `
                               -WorkingDirectory $runtime
-          # Bumped from 5s to 12s: on prior runs gateway stayed alive
-          # well past 5s (so 4b passed) but died before 4c's first
-          # poll at ~8s.  12s catches the death inside 4b where the
-          # stdout/stderr dump already happens on failure.
-          Start-Sleep -Seconds 12
+          $gwPid = $gw.Id
+          Write-Host "Gateway spawned: pid=$gwPid"
 
-          if ($gw.HasExited) {
-            Write-Host "=== gateway stdout (full) ==="
-            Get-Content $stdoutLog -ErrorAction SilentlyContinue
-            Write-Host ""
-            Write-Host "=== gateway stderr (full) ==="
-            Get-Content $stderrLog -ErrorAction SilentlyContinue
-            Write-Host ""
-            Write-Host "=== gateway exit code: $($gw.ExitCode) ==="
-            throw "LAYER 4b FAIL: gateway exited during 12s alive window (exit $($gw.ExitCode))"
-          }
-          "pid=$($gw.Id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "LAYER 4b OK: pid $($gw.Id) alive after 12s"
-
-      - name: Layer 4c — gateway binds 18789 within 180s
-        shell: pwsh
-        run: |
-          # NOTE: $pid is a PowerShell read-only automatic variable — use $gwPid.
-          $gwPid = [int]"${{ steps.layer4b.outputs.pid }}"
-          $runtime = "${{ steps.layer3.outputs.runtime }}"
-          $stateDir = "${{ steps.layer4_setup.outputs.state_dir }}"
+          # Single wait loop — poll every 3s for either (a) the port
+          # coming up or (b) the process dying.  Whichever happens
+          # first wins.  Hard cap at 180s.  Staying in this pwsh
+          # session keeps the gateway inside the step's Job Object
+          # for the entire observation window.
           $deadline = (Get-Date).AddSeconds(180)
           $listening = $false
           $exitCode = $null
-
           while ((Get-Date) -lt $deadline) {
-            $gwAlive = Get-Process -Id $gwPid -ErrorAction SilentlyContinue
-            if (-not $gwAlive) {
-              # Try to recover the exit code — Get-Process on a dead PID
-              # returns null but WMI may still have it briefly.
-              try {
-                $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$gwPid" -ErrorAction SilentlyContinue
-                if ($cim -and $cim.ExitCode -ne $null) { $exitCode = $cim.ExitCode }
-              } catch {}
-              Write-Host "Gateway PID $gwPid died before binding (exit code: $exitCode)"
+            if ($gw.HasExited) {
+              $exitCode = $gw.ExitCode
+              Write-Host "Gateway PID $gwPid died; exit code: $exitCode"
               break
             }
             $conn = Get-NetTCPConnection -LocalPort 18789 -State Listen -ErrorAction SilentlyContinue
             if ($conn) {
               $elapsed = [int](180 - (($deadline - (Get-Date)).TotalSeconds))
-              Write-Host "LAYER 4c OK: 18789 listening after ${elapsed}s (pid=$($conn[0].OwningProcess))"
+              Write-Host "LAYER 4 OK: 18789 listening after ${elapsed}s (pid=$($conn[0].OwningProcess))"
               $listening = $true
               break
             }
@@ -474,10 +442,10 @@ jobs:
 
           Write-Host ""
           Write-Host "=== gateway-stdout.log (full) ==="
-          Get-Content (Join-Path $runtime "gateway-stdout.log") -ErrorAction SilentlyContinue
+          Get-Content $stdoutLog -ErrorAction SilentlyContinue
           Write-Host ""
           Write-Host "=== gateway-stderr.log (full) ==="
-          Get-Content (Join-Path $runtime "gateway-stderr.log") -ErrorAction SilentlyContinue
+          Get-Content $stderrLog -ErrorAction SilentlyContinue
 
           Write-Host ""
           Write-Host "=== $stateDir contents ==="
@@ -488,13 +456,6 @@ jobs:
             Write-Host "(state dir not created — openclaw never got that far?)"
           }
 
-          # Gateway writes a forensic breadcrumb trail — config-health.json
-          # captures its view of the config at startup, config-audit.jsonl
-          # logs every config mutation it makes, and openclaw.json is the
-          # post-death state (including whatever gateway added and then
-          # bailed on).  These three files are the authoritative answer
-          # to "why did gateway exit between 'auth token saved' and
-          # 'listening'".  Dump them verbatim.
           foreach ($f in @('openclaw.json', 'openclaw.json.bak', 'logs\config-health.json', 'logs\config-audit.jsonl')) {
             $path = Join-Path $stateDir $f
             if (Test-Path $path) {
@@ -504,8 +465,6 @@ jobs:
             }
           }
 
-          # Any gateway log files the boot sequence may have written
-          # independently of stdout/stderr pipes.
           $logsDir = Join-Path $stateDir "logs"
           if (Test-Path $logsDir) {
             Get-ChildItem $logsDir -File -ErrorAction SilentlyContinue |
@@ -517,10 +476,15 @@ jobs:
               }
           }
 
-          try { Stop-Process -Id $gwPid -Force -ErrorAction SilentlyContinue } catch {}
-          Start-Sleep -Seconds 3
+          if (-not $gw.HasExited) {
+            try { Stop-Process -Id $gwPid -Force -ErrorAction SilentlyContinue } catch {}
+            Start-Sleep -Seconds 3
+          }
 
-          if (-not $listening) { throw "LAYER 4c FAIL: 18789 never listened (gateway exit code: $exitCode)" }
+          if (-not $listening) {
+            throw "LAYER 4 FAIL: 18789 never listened (gateway exit code: $exitCode)"
+          }
+          "pid=$gwPid" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Launch installed app (sanity check binary boots)
         shell: pwsh
