@@ -52,21 +52,25 @@ async function launchMyClawElectron(homeDir: string, userDataDir: string): Promi
   // state leakage across the job is fine.
   const installedExe = process.env.MYCLAW_INSTALLED_EXE;
   if (installedExe) {
+    // Do NOT override MYCLAW_USER_DATA_DIR here — let the app use its
+    // default (%APPDATA%/myclaw-desktop/) so install-smoke's "Capture
+    // diagnostics" step can still find the log file.  Runner is
+    // ephemeral; state leakage into APPDATA is fine.
     return await electron.launch({
       executablePath: installedExe,
       args: [],
       env: {
         ...process.env,
         MYCLAW_E2E: '1',
-        MYCLAW_USER_DATA_DIR: userDataDir,
         MYCLAW_PORT_MYCLAW_HOST_API: String(hostApiPort),
         ...(process.env.OPENROUTER_TEST_API_KEY
           ? { OPENROUTER_TEST_API_KEY: process.env.OPENROUTER_TEST_API_KEY }
           : {}),
       },
-      // First-launch splash + runtime npm install can take up to ~90s on
-      // Windows CI.  Subsequent launches are fast.  Conservative budget.
-      timeout: 180_000,
+      // Windows CI first-launch is SLOW: Electron cold start + antivirus
+      // scanning + potential runtime npm install can easily exceed 3 min.
+      // 6 min budget; the test-level setTimeout caps the full run.
+      timeout: 360_000,
     });
   }
 
