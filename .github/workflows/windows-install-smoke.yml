@@ -538,7 +538,15 @@ jobs:
           # then invoke that script.  cmd parses the redirect from the
           # script file exactly as shell-intended.
           $batFile = Join-Path $env:USERPROFILE "launch-myclaw.bat"
-          $batLine = '"' + $exe + '" --enable-logging=stderr --v=1 --no-sandbox > "' + $outLog + '" 2> "' + $errLog + '"'
+          # Standard CI-friendly Electron flag bundle:
+          #   --no-sandbox           : avoid sandbox setup which can block
+          #   --disable-gpu          : we already disableHardwareAcceleration()
+          #                            in-code but pass it too for completeness
+          #   --disable-dev-shm-usage: /dev/shm tricks (Linux-origin) — harmless
+          #                            on Windows but kept for symmetry with
+          #                            what Puppeteer/Playwright pass by default
+          $electronFlags = '--enable-logging=stderr --v=1 --no-sandbox --disable-gpu --disable-dev-shm-usage'
+          $batLine = '"' + $exe + '" ' + $electronFlags + ' > "' + $outLog + '" 2> "' + $errLog + '"'
           $batContent = "@echo off`r`n" + $batLine + "`r`n"
           Set-Content -Path $batFile -Value $batContent -Encoding ascii -NoNewline
           Write-Host "Launch script: $batFile"
@@ -585,7 +593,13 @@ jobs:
           # Electron userData defaults to %APPDATA%\<productName>; productName is MyClaw.One
           $appLogs = Join-Path $env:APPDATA "MyClaw.One\logs"
 
-          $totalWaitSec = 900
+          # Short wait — CI Electron manual-launch path is known broken
+          # on windows-latest (app.whenReady never fires, 0 output).  We
+          # keep this step as diagnostic evidence but don't burn 15
+          # minutes waiting on what we already know will time out.  The
+          # real smoke verification is Layer 4 (gateway) + uninstall
+          # canary tests (steps 29+).
+          $totalWaitSec = 60
           $start = Get-Date
           $deadline = $start.AddSeconds($totalWaitSec)
           $found = $false
