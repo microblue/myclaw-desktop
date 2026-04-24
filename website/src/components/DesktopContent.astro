@@ -1,6 +1,11 @@
 ---
-import { t } from '@/lib/i18n';
+import { t, getLanguage } from '@/lib/i18n';
 import Icon from '@/components/icons/phosphor.astro';
+
+// Locale-aware internal links (e.g. /changelog/ vs /zh/changelog/).
+const lang = getLanguage();
+const localePrefix = lang === 'en' ? '' : `/${lang}`;
+const changelogHref = `${localePrefix}/changelog/`;
 
 // Download version is the pinned Desktop release that the buttons
 // point to.  See scripts/release-bump.mjs (Phase 8) — that script
@@ -139,8 +144,8 @@ const currentVersionText = t('go.currentVersion', { version: DOWNLOAD_VERSION })
                     </div>
                     <p class="text-xs text-muted-foreground">
                         {currentVersionText} ·{' '}
-                        <a href="/changelog/" class="underline underline-offset-2 transition-colors hover:text-foreground">
-                            What&rsquo;s new
+                        <a href={changelogHref} class="underline underline-offset-2 transition-colors hover:text-foreground">
+                            {lang === 'zh' ? '更新日志' : "What's new"}
                         </a>{' '}
                         ·{' '}
                         <a href="https://github.com/microblue/myclaw-desktop-releases/releases" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 transition-colors hover:text-foreground">
