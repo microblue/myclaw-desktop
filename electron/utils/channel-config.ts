@@ -5,6 +5,7 @@
  * All file I/O uses async fs/promises to avoid blocking the main thread.
  */
 import { access, mkdir, readFile, writeFile, readdir, stat, rm } from 'fs/promises';
+import { write_atomic_json } from './atomic-json';
 import { constants } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
@@ -360,7 +361,7 @@ export async function writeOpenClawConfig(config: OpenClawConfig): Promise<void>
         commands.restart = true;
         config.commands = commands;
 
-        await writeFile(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
+        await write_atomic_json(CONFIG_FILE, config);
     } catch (error) {
         logger.error('Failed to write OpenClaw config', error);
         console.error('Failed to write OpenClaw config:', error);

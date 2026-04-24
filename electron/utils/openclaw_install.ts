@@ -393,10 +393,15 @@ interface OpenClawSetupSpec {
 
 function run_openclaw_setup(spec: OpenClawSetupSpec): Promise<void> {
   return new Promise((resolve, reject) => {
+    // openclaw's `setup --non-interactive` refuses to run without
+    // explicit `--accept-risk`.  MyClaw is a dashboard; accepting the
+    // non-interactive-setup risk on the user's behalf is exactly what
+    // we're here for.
     const args = [
       spec.openclaw_entry,
       'setup',
       '--non-interactive',
+      '--accept-risk',
       '--mode', 'local',
     ];
     const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: 'production' };

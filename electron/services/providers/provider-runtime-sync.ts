@@ -3,6 +3,7 @@ import { getProviderAccount, listProviderAccounts } from './provider-store';
 import { getProviderSecret } from '../secrets/secret-store';
 import type { ProviderConfig } from '../../utils/secure-storage';
 import { getAllProviders, getApiKey, getDefaultProvider, getProvider } from '../../utils/secure-storage';
+import { prefix_model_ref } from '../../utils/model-ref';
 import { getProviderConfig, getProviderDefaultModel } from '../../utils/provider-registry';
 import {
   removeProviderFromOpenClaw,
@@ -119,21 +120,9 @@ async function getBrowserOAuthRuntimeProvider(config: ProviderConfig): Promise<s
 
 export function getProviderModelRef(config: ProviderConfig): string | undefined {
   const providerKey = getOpenClawProviderKey(config.type, config.id);
-
-  if (config.model) {
-    return config.model.startsWith(`${providerKey}/`)
-      ? config.model
-      : `${providerKey}/${config.model}`;
-  }
-
-  const defaultModel = getProviderDefaultModel(config.type);
-  if (!defaultModel) {
-    return undefined;
-  }
-
-  return defaultModel.startsWith(`${providerKey}/`)
-    ? defaultModel
-    : `${providerKey}/${defaultModel}`;
+  const model = config.model ?? getProviderDefaultModel(config.type);
+  if (!model) return undefined;
+  return prefix_model_ref(providerKey, model);
 }
 
 export async function getProviderFallbackModelRefs(config: ProviderConfig): Promise<string[]> {

@@ -8,7 +8,7 @@
  * equivalents could stall for 500 ms – 2 s+ per call, causing "Not
  * Responding" hangs.
  */
-import { access, mkdir, readFile, writeFile } from 'fs/promises';
+import { access, readFile, writeFile } from 'fs/promises';
 import { constants } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
@@ -24,6 +24,8 @@ import {
   isOpenClawOAuthPluginProviderKey,
 } from './provider-keys';
 import { withConfigLock } from './config-mutex';
+import { read_json_file, write_atomic_json } from './atomic-json';
+import { prefix_model_ref, strip_model_ref } from './model-ref';
 
 const AUTH_STORE_VERSION = 1;
 const AUTH_PROFILE_FILENAME = 'auth-profiles.json';
@@ -44,28 +46,18 @@ async function fileExists(p: string): Promise<boolean> {
   }
 }
 
-/** Ensure a directory exists (replaces mkdirSync). */
-async function ensureDir(dir: string): Promise<void> {
-  if (!(await fileExists(dir))) {
-    await mkdir(dir, { recursive: true });
-  }
-}
-
 /** Read a JSON file, returning `null` on any error. */
 async function readJsonFile<T>(filePath: string): Promise<T | null> {
-  try {
-    if (!(await fileExists(filePath))) return null;
-    const raw = await readFile(filePath, 'utf-8');
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
-  }
+  return read_json_file<T>(filePath);
 }
 
-/** Write a JSON file, creating parent directories if needed. */
+/**
+ * Write a JSON file atomically.  Wraps the shared `write_atomic_json`
+ * helper so a crash mid-write can never leave a half-written
+ * openclaw.json / auth-profiles.json on disk.
+ */
 async function writeJsonFile(filePath: string, data: unknown): Promise<void> {
-  await ensureDir(join(filePath, '..'));
-  await writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  await write_atomic_json(filePath, data);
 }
 
 // ── Types ────────────────────────────────────────────────────────
@@ -651,17 +643,17 @@ type ProviderEntryBuildOptions = {
 function normalizeModelRef(provider: string, modelOverride?: string): string | undefined {
   const rawModel = modelOverride || getProviderDefaultModel(provider);
   if (!rawModel) return undefined;
-  return rawModel.startsWith(`${provider}/`) ? rawModel : `${provider}/${rawModel}`;
+  return prefix_model_ref(provider, rawModel);
 }
 
 function extractModelId(provider: string, modelRef: string): string {
-  return modelRef.startsWith(`${provider}/`) ? modelRef.slice(provider.length + 1) : modelRef;
+  return strip_model_ref(provider, modelRef);
 }
 
 function extractFallbackModelIds(provider: string, fallbackModels: string[]): string[] {
   return fallbackModels
     .filter((fallback) => fallback.startsWith(`${provider}/`))
-    .map((fallback) => fallback.slice(provider.length + 1));
+    .map((fallback) => strip_model_ref(provider, fallback));
 }
 
 function mergeProviderModels(

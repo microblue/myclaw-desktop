@@ -295,8 +295,8 @@ jobs:
           Write-Host "OPENCLAW_STATE_DIR=$stateDir"
 
           $setupLog = Join-Path $runtime "setup.log"
-          Write-Host "Running: $node $entry setup --non-interactive --mode local"
-          & $node $entry setup --non-interactive --mode local 2>&1 | Tee-Object -FilePath $setupLog
+          Write-Host "Running: $node $entry setup --non-interactive --accept-risk --mode local"
+          & $node $entry setup --non-interactive --accept-risk --mode local 2>&1 | Tee-Object -FilePath $setupLog
           $rc = $LASTEXITCODE
 
           Write-Host ""
