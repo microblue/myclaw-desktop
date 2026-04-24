@@ -443,18 +443,27 @@ interface OpenClawOnboardSpec {
 
 function run_openclaw_onboard(spec: OpenClawOnboardSpec): Promise<void> {
   return new Promise((resolve, reject) => {
-    // `openclaw setup --non-interactive` refuses to run and points at
-    // `openclaw onboard --non-interactive --accept-risk` as the correct
-    // non-interactive bootstrap command.  setup is user-facing interactive;
-    // onboard is the scriptable equivalent.  MyClaw is a dashboard —
-    // accepting the non-interactive risk on the user's behalf is
-    // exactly the job.
+    // Flags chosen specifically for a scripted bootstrap where MyClaw
+    // will own every subsequent config decision via its own UI:
+    //
+    //   --non-interactive  — no prompts
+    //   --accept-risk      — required by openclaw for non-interactive
+    //   --mode local       — MyClaw is always local
+    //   --flow quickstart  — shortest path through onboard's state machine
+    //   --auth-choice skip — do NOT configure a provider here.  MyClaw's
+    //                        UI will collect provider + API key from the
+    //                        user and merge them into openclaw.json via
+    //                        the sync* functions.  Without --auth-choice
+    //                        onboard --non-interactive hangs waiting for
+    //                        the auth selection that no one will provide.
     const args = [
       spec.openclaw_entry,
       'onboard',
       '--non-interactive',
       '--accept-risk',
       '--mode', 'local',
+      '--flow', 'quickstart',
+      '--auth-choice', 'skip',
     ];
     const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: 'production' };
     if (spec.state_dir) env.OPENCLAW_STATE_DIR = spec.state_dir;

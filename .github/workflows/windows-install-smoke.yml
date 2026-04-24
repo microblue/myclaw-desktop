@@ -296,14 +296,42 @@ jobs:
           Write-Host "OPENCLAW_STATE_DIR=$stateDir"
 
           $setupLog = Join-Path $runtime "setup.log"
-          Write-Host "Running: $node $entry onboard --non-interactive --accept-risk --mode local"
-          & $node $entry onboard --non-interactive --accept-risk --mode local 2>&1 | Tee-Object -FilePath $setupLog
-          $rc = $LASTEXITCODE
+          $onboardArgs = @(
+            $entry, 'onboard',
+            '--non-interactive', '--accept-risk',
+            '--mode', 'local',
+            '--flow', 'quickstart',
+            '--auth-choice', 'skip'
+          )
+          Write-Host "Running: $node $($onboardArgs -join ' ')"
+
+          # Spawn with process timeout (150s) + real-time stdout/stderr
+          # capture.  The previous Tee-Object pipe was buffering and
+          # swallowed all output until the workflow's 45-min timeout
+          # cancelled the step — 150s here surfaces any hang with
+          # whatever openclaw wrote before stopping.
+          $stdoutFile = Join-Path $runtime "onboard-stdout.log"
+          $stderrFile = Join-Path $runtime "onboard-stderr.log"
+          $proc = Start-Process -FilePath $node -ArgumentList $onboardArgs `
+                                 -PassThru -NoNewWindow `
+                                 -RedirectStandardOutput $stdoutFile `
+                                 -RedirectStandardError $stderrFile
+          $finished = $proc.WaitForExit(150 * 1000)
 
           Write-Host ""
-          Write-Host "=== setup.log tail ==="
-          Get-Content $setupLog -Tail 40 -ErrorAction SilentlyContinue
+          Write-Host "=== onboard stdout (full) ==="
+          Get-Content $stdoutFile -ErrorAction SilentlyContinue
+          Write-Host ""
+          Write-Host "=== onboard stderr (full) ==="
+          Get-Content $stderrFile -ErrorAction SilentlyContinue
+          Write-Host ""
 
+          if (-not $finished) {
+            try { $proc.Kill() } catch {}
+            throw "LAYER 4a.5 FAIL: openclaw onboard hung > 150s (killed)"
+          }
+
+          $rc = $proc.ExitCode
           if ($rc -ne 0) {
             throw "LAYER 4a.5 FAIL: openclaw onboard exited $rc"
           }
