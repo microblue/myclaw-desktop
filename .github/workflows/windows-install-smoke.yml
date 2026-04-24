@@ -390,6 +390,35 @@ jobs:
             Write-Host "(state dir not created — openclaw never got that far?)"
           }
 
+          # Gateway writes a forensic breadcrumb trail — config-health.json
+          # captures its view of the config at startup, config-audit.jsonl
+          # logs every config mutation it makes, and openclaw.json is the
+          # post-death state (including whatever gateway added and then
+          # bailed on).  These three files are the authoritative answer
+          # to "why did gateway exit between 'auth token saved' and
+          # 'listening'".  Dump them verbatim.
+          foreach ($f in @('openclaw.json', 'openclaw.json.bak', 'logs\config-health.json', 'logs\config-audit.jsonl')) {
+            $path = Join-Path $stateDir $f
+            if (Test-Path $path) {
+              Write-Host ""
+              Write-Host "=== $path ==="
+              Get-Content $path
+            }
+          }
+
+          # Any gateway log files the boot sequence may have written
+          # independently of stdout/stderr pipes.
+          $logsDir = Join-Path $stateDir "logs"
+          if (Test-Path $logsDir) {
+            Get-ChildItem $logsDir -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -match '\.log$|gateway' } |
+              ForEach-Object {
+                Write-Host ""
+                Write-Host "=== $($_.FullName) (tail 100) ==="
+                Get-Content $_.FullName -Tail 100
+              }
+          }
+
           try { Stop-Process -Id $gwPid -Force -ErrorAction SilentlyContinue } catch {}
           Start-Sleep -Seconds 3
 
