@@ -390,43 +390,18 @@ jobs:
           # Force any swallowed error to the surface.  Prior runs with
           # NODE_OPTIONS alone produced no extra stderr, suggesting
           # either the env var wasn't propagated OR the exit is a
-          # clean process.exit() (no uncaught exception).  Install a
-          # --require preload that hooks every possible exit path and
-          # prints to stderr (stdio already flushes openclaw's own
-          # log lines, so simple writes work).
-          $preload = Join-Path $runtime "exit-trace.cjs"
-          $preloadContent = @'
-const fs = require('fs');
-const write = (s) => {
-  try { fs.writeSync(2, s + '\n'); } catch {}
-};
-write('[exit-trace] preload installed, pid=' + process.pid);
-process.on('exit', (code) => write('[exit-trace] EXIT code=' + code));
-process.on('beforeExit', (code) => write('[exit-trace] BEFORE_EXIT code=' + code));
-process.on('uncaughtException', (err, origin) => {
-  write('[exit-trace] UNCAUGHT_EXCEPTION origin=' + origin + ' msg=' + (err && err.message));
-  write('[exit-trace] stack=' + (err && err.stack));
-});
-process.on('unhandledRejection', (reason, promise) => {
-  write('[exit-trace] UNHANDLED_REJECTION reason=' + (reason && (reason.message || reason)));
-  write('[exit-trace] stack=' + (reason && reason.stack));
-});
-process.on('warning', (w) => {
-  write('[exit-trace] WARNING ' + w.name + ': ' + w.message);
-});
-process.on('SIGTERM', () => write('[exit-trace] SIGTERM received'));
-process.on('SIGINT', () => write('[exit-trace] SIGINT received'));
-process.on('SIGHUP', () => write('[exit-trace] SIGHUP received'));
-process.on('SIGBREAK', () => write('[exit-trace] SIGBREAK received'));
-const origExit = process.exit.bind(process);
-process.exit = (code) => {
-  write('[exit-trace] process.exit(' + code + ') called from:');
-  write(new Error().stack);
-  return origExit(code);
-};
-'@
-          Set-Content -Path $preload -Value $preloadContent -Encoding utf8 -NoNewline
-          Write-Host "Wrote exit-trace preload to: $preload"
+          # clean process.exit() (no uncaught exception).  Use a
+          # --require preload (committed at .github/workflows/
+          # exit-trace.cjs) that hooks every possible exit path and
+          # writes to stderr via fs.writeSync — bypassing the default
+          # stream buffering that eats last-gasp logs.  The preload
+          # also wraps process.exit() so any clean-exit caller is
+          # visible with its stack.
+          $preload = Join-Path $env:GITHUB_WORKSPACE ".github\workflows\exit-trace.cjs"
+          if (-not (Test-Path $preload)) {
+            throw "exit-trace preload missing at $preload"
+          }
+          Write-Host "Using exit-trace preload: $preload"
 
           $stdoutLog = Join-Path $runtime "gateway-stdout.log"
           $stderrLog = Join-Path $runtime "gateway-stderr.log"
