@@ -721,6 +721,12 @@ jobs:
 
       - name: Post-install E2E (user journey via Playwright)
         continue-on-error: true
+        # Playwright in this environment has shown runs > 15min waiting
+        # for Electron init that never happens.  Cap the step at 10min
+        # so it doesn't eat the 45min job budget and leave uninstall
+        # canary tests unrun.  continue-on-error absorbs the step
+        # failure; downstream uninstall regression checks still run.
+        timeout-minutes: 10
         # Full user journey on top of the already-verified binary:
         #   - Launch MyClaw.One.exe via Playwright Electron
         #   - Skip setup wizard, seed OpenRouter + Google Flash Lite via IPC
