@@ -105,109 +105,170 @@ jobs:
           "dir=$installDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Get-ChildItem $installDir | Format-Table Name, Length
 
-      - name: Layer 2 — verify bundled Node + npm
-        # The installer is supposed to bundle a standalone Node 24 +
-        # its companion npm under resources\bin\.  Without these, the
-        # MyClaw runtime install step (Layer 3) can't spawn anything.
-        # Verify by running both tools directly, before involving MyClaw.
-        id: layer2
+      # ── Layer 2: bundled runtime toolchain ──────────────────────────────────
+      # Split into 2a/2b/2c/2d so a failure pinpoints the exact step.
+
+      - name: Layer 2a — bundled node.exe present
+        id: layer2a
         shell: pwsh
         run: |
           $installDir = "${{ steps.install-path.outputs.dir }}"
           $bundledNode = Join-Path $installDir "resources\bin\node.exe"
-          $bundledNpm  = Join-Path $installDir "resources\bin\node_modules\npm\bin\npm-cli.js"
 
-          Write-Host "=== Bundled binaries tree ==="
+          Write-Host "=== Bundled binaries tree (first 40) ==="
           Get-ChildItem (Join-Path $installDir "resources\bin") -Recurse -Depth 2 -ErrorAction SilentlyContinue |
             Select-Object -First 40 | Format-Table FullName, Length
 
-          if (-not (Test-Path $bundledNode)) { throw "LAYER 2 FAIL: node.exe missing at $bundledNode" }
-          if (-not (Test-Path $bundledNpm))  { throw "LAYER 2 FAIL: npm-cli.js missing at $bundledNpm" }
-
-          $nodeVersion = & $bundledNode --version
-          Write-Host "Bundled node version: $nodeVersion"
-          if ($LASTEXITCODE -ne 0) { throw "LAYER 2 FAIL: bundled node.exe --version failed" }
-
-          $npmVersion = & $bundledNode $bundledNpm --version
-          Write-Host "Bundled npm version: $npmVersion"
-          if ($LASTEXITCODE -ne 0) { throw "LAYER 2 FAIL: bundled npm --version failed" }
-
+          if (-not (Test-Path $bundledNode)) { throw "LAYER 2a FAIL: node.exe missing at $bundledNode" }
           "node=$bundledNode" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "npm=$bundledNpm" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "LAYER 2 OK: node $nodeVersion + npm $npmVersion"
+          Write-Host "LAYER 2a OK: $bundledNode"
 
-      - name: Layer 3 — verify openclaw installs via bundled npm
-        # Stand-alone runtime install into a scratch prefix (C:\TEMP\layer3),
-        # completely isolated from MyClaw's ~/.myclaw/runtime/.  If this
-        # fails, no amount of MyClaw orchestration will ever produce a
-        # working runtime — the bundled toolchain or the openclaw package
-        # itself is the issue.  Uses the exact same flag set MyClaw's
-        # runtime install code uses.
-        id: layer3
+      - name: Layer 2b — bundled node.exe runs
         shell: pwsh
         run: |
-          $node = "${{ steps.layer2.outputs.node }}"
-          $npm  = "${{ steps.layer2.outputs.npm }}"
+          $node = "${{ steps.layer2a.outputs.node }}"
+          $v = & $node --version
+          if ($LASTEXITCODE -ne 0) { throw "LAYER 2b FAIL: node --version exited $LASTEXITCODE" }
+          Write-Host "LAYER 2b OK: node $v"
 
-          # Read the pinned version from MyClaw's package.json so the
-          # test exactly mirrors what first-launch would install.
+      - name: Layer 2c — bundled npm-cli.js present
+        id: layer2c
+        shell: pwsh
+        run: |
+          $installDir = "${{ steps.install-path.outputs.dir }}"
+          $bundledNpm = Join-Path $installDir "resources\bin\node_modules\npm\bin\npm-cli.js"
+          if (-not (Test-Path $bundledNpm)) {
+            Write-Host "=== Full resources\bin tree (for diagnosis) ==="
+            Get-ChildItem (Join-Path $installDir "resources\bin") -Recurse -ErrorAction SilentlyContinue |
+              Select-Object -First 80 | Format-Table FullName, Length
+            throw "LAYER 2c FAIL: npm-cli.js missing at $bundledNpm (is after-pack.cjs copying node_modules?)"
+          }
+          "npm=$bundledNpm" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "LAYER 2c OK: $bundledNpm"
+
+      - name: Layer 2d — bundled npm runs via bundled node
+        shell: pwsh
+        run: |
+          $node = "${{ steps.layer2a.outputs.node }}"
+          $npm = "${{ steps.layer2c.outputs.npm }}"
+          $v = & $node $npm --version
+          if ($LASTEXITCODE -ne 0) { throw "LAYER 2d FAIL: node npm-cli.js --version exited $LASTEXITCODE" }
+          Write-Host "LAYER 2d OK: npm $v"
+
+      # ── Layer 3: MyClaw runtime can be installed via bundled toolchain ───────
+      # Split into 3a/3b so we know whether openclaw itself or the preinstalled
+      # plugins are the blocker.  Both use the exact flag set MyClaw's runtime
+      # init uses.
+
+      - name: Layer 3a — install openclaw alone into scratch prefix
+        id: layer3a
+        shell: pwsh
+        run: |
+          $node = "${{ steps.layer2a.outputs.node }}"
+          $npm  = "${{ steps.layer2c.outputs.npm }}"
+
           $pkg = Get-Content "$env:GITHUB_WORKSPACE\package.json" -Raw | ConvertFrom-Json
           $openclawVersion = $pkg.available_backends.openclaw.version
-          Write-Host "Pinned openclaw version from package.json: $openclawVersion"
+          Write-Host "Configured openclaw version: $openclawVersion"
 
           $prefix = "C:\TEMP\layer3-verify"
           if (Test-Path $prefix) { Remove-Item -Recurse -Force $prefix }
           New-Item -ItemType Directory -Force -Path $prefix | Out-Null
 
-          $logFile = Join-Path $prefix "install.log"
-          Write-Host "Running: $node $npm install openclaw@$openclawVersion --prefix $prefix ..."
-
-          # NOTE: no --ignore-scripts here — matches production behaviour.
-          # openclaw's own postinstall-bundled-plugins.mjs will run and
-          # install plugin deps into $prefix\node_modules\openclaw\node_modules\.
-          $procArgs = @(
+          $log = Join-Path $prefix "install-openclaw.log"
+          $args = @(
             $npm, 'install', "openclaw@$openclawVersion",
             '--prefix', $prefix,
             '--no-save', '--package-lock=false',
             '--legacy-peer-deps', '--omit=dev'
           )
-          & $node @procArgs 2>&1 | Tee-Object -FilePath $logFile
-          $installExit = $LASTEXITCODE
+          Write-Host "Running: $node $($args -join ' ')"
+          & $node @args 2>&1 | Tee-Object -FilePath $log
+          $rc = $LASTEXITCODE
 
           Write-Host ""
-          Write-Host "=== install.log tail (last 60 lines) ==="
-          Get-Content $logFile -Tail 60 -ErrorAction SilentlyContinue
+          Write-Host "=== install-openclaw.log tail ==="
+          Get-Content $log -Tail 60 -ErrorAction SilentlyContinue
 
-          if ($installExit -ne 0) {
-            throw "LAYER 3 FAIL: bundled npm install openclaw exited with $installExit"
-          }
+          if ($rc -ne 0) { throw "LAYER 3a FAIL: openclaw-only install exited $rc" }
 
           $installedPkg = Join-Path $prefix "node_modules\openclaw\package.json"
-          if (-not (Test-Path $installedPkg)) {
-            throw "LAYER 3 FAIL: openclaw/package.json absent after install"
-          }
+          if (-not (Test-Path $installedPkg)) { throw "LAYER 3a FAIL: openclaw/package.json absent" }
           $installedVer = (Get-Content $installedPkg -Raw | ConvertFrom-Json).version
-          if ($installedVer -ne $openclawVersion) {
-            Write-Host "WARN: installed=$installedVer configured=$openclawVersion (may be dist-tag shift)"
-          }
           "runtime=$prefix" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "openclaw_version=$installedVer" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "LAYER 3 OK: openclaw $installedVer installed into $prefix"
+          Write-Host "LAYER 3a OK: openclaw $installedVer installed"
 
-      - name: Layer 4 — verify openclaw gateway starts from the scratch runtime
-        # Spawn `<bundled-node> <scratch-runtime>/node_modules/openclaw/openclaw.mjs
-        # gateway run` and confirm 18789 binds within 180s.  This is
-        # independent of MyClaw's process-launcher logic — we're asking
-        # "can openclaw itself start when given our bundled Node and the
-        # default config?".  If this fails it's either an openclaw bug
-        # or our bundled Node has an incompatibility.
+      - name: Layer 3b — install preinstalled_plugins alongside openclaw
+        # The package.json `available_backends.openclaw.preinstalled_plugins`
+        # map lists the four channel plugin npm packages that MyClaw first-
+        # launch installs.  If any of them are private / not on the public
+        # registry / version-unresolvable, this step surfaces it cleanly.
         shell: pwsh
         run: |
-          $node = "${{ steps.layer2.outputs.node }}"
-          $runtime = "${{ steps.layer3.outputs.runtime }}"
-          $entry = Join-Path $runtime "node_modules\openclaw\openclaw.mjs"
+          $node = "${{ steps.layer2a.outputs.node }}"
+          $npm  = "${{ steps.layer2c.outputs.npm }}"
+          $prefix = "${{ steps.layer3a.outputs.runtime }}"
 
-          if (-not (Test-Path $entry)) { throw "LAYER 4 FAIL: openclaw.mjs not found at $entry" }
+          $pkg = Get-Content "$env:GITHUB_WORKSPACE\package.json" -Raw | ConvertFrom-Json
+          $plugins = $pkg.available_backends.openclaw.preinstalled_plugins
+          if (-not $plugins) {
+            Write-Host "LAYER 3b SKIP: preinstalled_plugins map is empty"
+            exit 0
+          }
+
+          $specs = @()
+          $plugins.PSObject.Properties | ForEach-Object {
+            $specs += "$($_.Name)@$($_.Value)"
+          }
+          Write-Host "Preinstalled plugin specs: $($specs -join ', ')"
+
+          $log = Join-Path $prefix "install-plugins.log"
+          $args = @($npm, 'install') + $specs + @(
+            '--prefix', $prefix,
+            '--no-save', '--package-lock=false',
+            '--legacy-peer-deps', '--omit=dev'
+          )
+          Write-Host "Running: $node $($args -join ' ')"
+          & $node @args 2>&1 | Tee-Object -FilePath $log
+          $rc = $LASTEXITCODE
+
+          Write-Host ""
+          Write-Host "=== install-plugins.log tail ==="
+          Get-Content $log -Tail 80 -ErrorAction SilentlyContinue
+
+          if ($rc -ne 0) {
+            throw "LAYER 3b FAIL: preinstalled_plugins install exited $rc (check registry access / package names)"
+          }
+
+          foreach ($p in $plugins.PSObject.Properties.Name) {
+            $pathParts = $p -split '/'
+            $installed = Join-Path $prefix ("node_modules\" + ($pathParts -join '\') + "\package.json")
+            if (-not (Test-Path $installed)) {
+              throw "LAYER 3b FAIL: plugin ${p} did not land at ${installed}"
+            }
+          }
+          Write-Host "LAYER 3b OK: $($plugins.PSObject.Properties.Count) plugin(s) installed alongside openclaw"
+
+      # ── Layer 4: openclaw gateway starts from the scratch runtime ────────────
+
+      - name: Layer 4a — openclaw.mjs entry exists
+        id: layer4a
+        shell: pwsh
+        run: |
+          $runtime = "${{ steps.layer3a.outputs.runtime }}"
+          $entry = Join-Path $runtime "node_modules\openclaw\openclaw.mjs"
+          if (-not (Test-Path $entry)) { throw "LAYER 4a FAIL: $entry not found" }
+          "entry=$entry" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "LAYER 4a OK: $entry"
+
+      - name: Layer 4b — spawn openclaw gateway, process alive 5s later
+        id: layer4b
+        shell: pwsh
+        run: |
+          $node = "${{ steps.layer2a.outputs.node }}"
+          $entry = "${{ steps.layer4a.outputs.entry }}"
+          $runtime = "${{ steps.layer3a.outputs.runtime }}"
 
           $stdoutLog = Join-Path $runtime "gateway-stdout.log"
           $stderrLog = Join-Path $runtime "gateway-stderr.log"
@@ -219,39 +280,52 @@ jobs:
                               -RedirectStandardOutput $stdoutLog `
                               -RedirectStandardError $stderrLog `
                               -WorkingDirectory $runtime
+          Start-Sleep -Seconds 5
 
-          # Wait for port 18789 up to 180s.  That's half the previous
-          # 420s budget since we're testing the bare `openclaw gateway`
-          # binary here, not MyClaw's full cold-boot path.
+          if ($gw.HasExited) {
+            Write-Host "=== gateway stdout ==="
+            Get-Content $stdoutLog -ErrorAction SilentlyContinue
+            Write-Host "=== gateway stderr ==="
+            Get-Content $stderrLog -ErrorAction SilentlyContinue
+            throw "LAYER 4b FAIL: gateway exited immediately with code $($gw.ExitCode)"
+          }
+          "pid=$($gw.Id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "LAYER 4b OK: pid $($gw.Id) alive after 5s"
+
+      - name: Layer 4c — gateway binds 18789 within 180s
+        shell: pwsh
+        run: |
+          $pid = [int]"${{ steps.layer4b.outputs.pid }}"
+          $runtime = "${{ steps.layer3a.outputs.runtime }}"
           $deadline = (Get-Date).AddSeconds(180)
           $listening = $false
+
           while ((Get-Date) -lt $deadline) {
-            if ($gw.HasExited) {
-              Write-Host "Gateway process exited early with code $($gw.ExitCode)"
+            $gwAlive = Get-Process -Id $pid -ErrorAction SilentlyContinue
+            if (-not $gwAlive) {
+              Write-Host "Gateway PID $pid died before binding"
               break
             }
             $conn = Get-NetTCPConnection -LocalPort 18789 -State Listen -ErrorAction SilentlyContinue
             if ($conn) {
-              $listening = $true
               $elapsed = [int](180 - (($deadline - (Get-Date)).TotalSeconds))
-              Write-Host "LAYER 4 OK: gateway listening on 18789 after ${elapsed}s"
+              Write-Host "LAYER 4c OK: 18789 listening after ${elapsed}s (pid=$($conn[0].OwningProcess))"
+              $listening = $true
               break
             }
             Start-Sleep -Seconds 3
           }
 
           Write-Host ""
-          Write-Host "=== gateway stdout tail ==="
-          Get-Content $stdoutLog -Tail 40 -ErrorAction SilentlyContinue
-          Write-Host "=== gateway stderr tail ==="
-          Get-Content $stderrLog -Tail 40 -ErrorAction SilentlyContinue
+          Write-Host "=== gateway-stdout.log tail ==="
+          Get-Content (Join-Path $runtime "gateway-stdout.log") -Tail 40 -ErrorAction SilentlyContinue
+          Write-Host "=== gateway-stderr.log tail ==="
+          Get-Content (Join-Path $runtime "gateway-stderr.log") -Tail 40 -ErrorAction SilentlyContinue
 
-          try { Stop-Process -Id $gw.Id -Force -ErrorAction SilentlyContinue } catch {}
+          try { Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue } catch {}
           Start-Sleep -Seconds 3
 
-          if (-not $listening) {
-            throw "LAYER 4 FAIL: openclaw gateway never bound 18789"
-          }
+          if (-not $listening) { throw "LAYER 4c FAIL: 18789 never listened" }
 
       - name: Launch installed app (sanity check binary boots)
         shell: pwsh

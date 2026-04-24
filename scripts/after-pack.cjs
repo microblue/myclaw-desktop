@@ -23,8 +23,11 @@
  *      to ~10 seconds on Windows machines with real-time AV.
  */
 
-const { existsSync, readdirSync, readFileSync, statSync, writeFileSync } = require('fs');
+const { cpSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } = require('fs');
 const { join, relative } = require('path');
+
+// electron-builder Arch enum: 0=ia32, 1=x64, 2=armv7l, 3=arm64, 4=universal
+const ARCH_MAP = { 0: 'ia32', 1: 'x64', 2: 'armv7l', 3: 'arm64', 4: 'universal' };
 
 function norm_win(p) {
   if (process.platform !== 'win32') return p;
@@ -113,7 +116,54 @@ function patch_lru_cache_in_asar_unpacked(asar_unpacked_dir) {
   return patched;
 }
 
-// ── 2. Windows NSIS extract speed patch ─────────────────────────────────────
+// ── 2. Copy bundled Node's node_modules (bypass electron-builder filter) ────
+//
+// `resources/bin/<platform>-<arch>/` holds the full extracted Node.js
+// distribution that download-bundled-node.mjs produces.  Top-level
+// files (node.exe, npm.cmd, npm.ps1, corepack shims, LICENSE, etc.)
+// get copied into the packaged `resources/bin/` by electron-builder's
+// `extraResources` rule just fine.  But the `node_modules/npm/` tree
+// underneath — the actual npm package the shims execute against — is
+// silently FILTERED OUT because electron-builder honours the repo's
+// `.gitignore`, which excludes `node_modules/` everywhere.
+//
+// Observed symptom (commit 6f261b9 install-smoke): `npm.cmd` present,
+// `node_modules/npm/bin/npm-cli.js` missing, every `npm` invocation
+// fails.
+//
+// Fix: after electron-builder finishes, manually copy the
+// `node_modules/` subtree from the source into the packaged resources
+// directory.  Same bypass pattern the repo previously used for
+// openclaw's own node_modules (which has since been removed since
+// v1.5 fetches openclaw at first launch).
+function copy_bundled_node_modules(context, resources_dir) {
+  const platform = context.electronPlatformName;
+  if (platform !== 'win32') {
+    // macOS / Linux builds don't bundle a Node runtime yet (see
+    // download-bundled-node.mjs — Windows-only).  Skip.
+    return;
+  }
+  const arch = ARCH_MAP[context.arch] || 'x64';
+  const source = join(__dirname, '..', 'resources', 'bin', `${platform}-${arch}`, 'node_modules');
+  const dest = join(resources_dir, 'bin', 'node_modules');
+
+  if (!existsSync(norm_win(source))) {
+    console.warn(
+      `[after-pack] ⚠️  ${source} not found — did \`pnpm run node:download:win\` run ` +
+      `before electron-builder?  Bundled npm will be unreachable in the installed app.`,
+    );
+    return;
+  }
+
+  // npm's internal tree can hit Windows MAX_PATH (260).  Use \\?\ prefixed
+  // paths so long-path support is not required on the build runner.
+  cpSync(norm_win(source), norm_win(dest), { recursive: true });
+  const npmCli = join(dest, 'npm', 'bin', 'npm-cli.js');
+  console.log(`[after-pack] ✅ Bundled Node node_modules copied → ${dest}`);
+  console.log(`[after-pack]    npm-cli.js at: ${npmCli} (exists=${existsSync(norm_win(npmCli))})`);
+}
+
+// ── 3. Windows NSIS extract speed patch ─────────────────────────────────────
 // electron-builder's extractUsing7za macro decompresses app-64.7z into a temp
 // dir, then uses CopyFiles to copy ~300MB of small files into $INSTDIR.  With
 // Windows Defender real-time scanning each file, CopyFiles alone takes 3–5
@@ -177,6 +227,8 @@ exports.default = async function afterPack(context) {
   if (lru_patched > 0) {
     console.log(`[after-pack] 🩹 Patched ${lru_patched} lru-cache instance(s) in app.asar.unpacked`);
   }
+
+  copy_bundled_node_modules(context, resources_dir);
 
   if (platform === 'win32') {
     patch_nsis_extract_template(join(__dirname, '..'));
