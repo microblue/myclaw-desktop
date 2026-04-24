@@ -304,15 +304,19 @@ jobs:
       - name: Layer 4c — gateway binds 18789 within 180s
         shell: pwsh
         run: |
-          $pid = [int]"${{ steps.layer4b.outputs.pid }}"
+          # NOTE: $pid is a PowerShell read-only automatic variable (current
+          # process's PID) — using it as a local name crashes on first line
+          # with "Cannot overwrite variable PID because it is read-only".
+          # Use $gwPid instead.
+          $gwPid = [int]"${{ steps.layer4b.outputs.pid }}"
           $runtime = "${{ steps.layer3.outputs.runtime }}"
           $deadline = (Get-Date).AddSeconds(180)
           $listening = $false
 
           while ((Get-Date) -lt $deadline) {
-            $gwAlive = Get-Process -Id $pid -ErrorAction SilentlyContinue
+            $gwAlive = Get-Process -Id $gwPid -ErrorAction SilentlyContinue
             if (-not $gwAlive) {
-              Write-Host "Gateway PID $pid died before binding"
+              Write-Host "Gateway PID $gwPid died before binding"
               break
             }
             $conn = Get-NetTCPConnection -LocalPort 18789 -State Listen -ErrorAction SilentlyContinue
@@ -331,7 +335,7 @@ jobs:
           Write-Host "=== gateway-stderr.log tail ==="
           Get-Content (Join-Path $runtime "gateway-stderr.log") -Tail 40 -ErrorAction SilentlyContinue
 
-          try { Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue } catch {}
+          try { Stop-Process -Id $gwPid -Force -ErrorAction SilentlyContinue } catch {}
           Start-Sleep -Seconds 3
 
           if (-not $listening) { throw "LAYER 4c FAIL: 18789 never listened" }
