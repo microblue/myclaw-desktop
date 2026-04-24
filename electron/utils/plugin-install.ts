@@ -17,7 +17,7 @@
  */
 import { app } from 'electron';
 import path from 'node:path';
-import { existsSync, cpSync, copyFileSync, statSync, mkdirSync, rmSync, readFileSync, writeFileSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, cpSync, copyFileSync, statSync, mkdirSync, rmSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { readdir, stat, copyFile, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -120,120 +120,18 @@ function toErrorDiagnostic(error: unknown): { code?: string; name?: string; mess
   };
 }
 
-// ── Known plugin-ID corrections ─────────────────────────────────────────────
-// Some npm packages ship with an openclaw.plugin.json whose "id" field
-// doesn't match the ID the plugin code actually exports.  After copying we
-// patch both the manifest AND the compiled JS so the Gateway accepts them.
-const MANIFEST_ID_FIXES: Record<string, string> = {
-  'wecom-openclaw-plugin': 'wecom',
-};
-
-/**
- * After a plugin has been copied to ~/.openclaw/extensions/<dir>, fix any
- * known manifest-ID mismatches so the Gateway can load the plugin.
- * Also patches package.json fields that the Gateway uses as "entry hints".
- */
-export function fixupPluginManifest(targetDir: string): void {
-  // 1. Fix openclaw.plugin.json id
-  const manifestPath = join(targetDir, 'openclaw.plugin.json');
-  try {
-    const raw = readFileSync(fsPath(manifestPath), 'utf-8');
-    const manifest = JSON.parse(raw);
-    const oldId = manifest.id as string | undefined;
-    if (oldId && MANIFEST_ID_FIXES[oldId]) {
-      const newId = MANIFEST_ID_FIXES[oldId];
-      manifest.id = newId;
-      writeFileSync(fsPath(manifestPath), JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
-      logger.info(`[plugin] Fixed manifest ID: ${oldId} → ${newId}`);
-    }
-  } catch {
-    // manifest may not exist yet — ignore
-  }
-
-  // 2. Fix package.json fields that Gateway uses as "entry hints"
-  const pkgPath = join(targetDir, 'package.json');
-  try {
-    const raw = readFileSync(fsPath(pkgPath), 'utf-8');
-    const pkg = JSON.parse(raw);
-    let modified = false;
-
-    // Check if the package name contains a legacy ID that needs fixing
-    for (const [oldId, newId] of Object.entries(MANIFEST_ID_FIXES)) {
-      if (typeof pkg.name === 'string' && pkg.name.includes(oldId)) {
-        pkg.name = pkg.name.replace(oldId, newId);
-        modified = true;
-      }
-      const install = pkg.openclaw?.install;
-      if (install) {
-        if (typeof install.npmSpec === 'string' && install.npmSpec.includes(oldId)) {
-          install.npmSpec = install.npmSpec.replace(oldId, newId);
-          modified = true;
-        }
-        if (typeof install.localPath === 'string' && install.localPath.includes(oldId)) {
-          install.localPath = install.localPath.replace(oldId, newId);
-          modified = true;
-        }
-      }
-    }
-
-    if (modified) {
-      writeFileSync(fsPath(pkgPath), JSON.stringify(pkg, null, 2) + '\n', 'utf-8');
-      logger.info(`[plugin] Fixed package.json entry hints in ${targetDir}`);
-    }
-  } catch {
-    // ignore
-  }
-
-  // 3. Fix hardcoded plugin IDs in compiled JS entry files.
-  //    The Gateway validates that the JS export's `id` matches the manifest.
-  patchPluginEntryIds(targetDir);
-}
-
-/**
- * Patch the compiled JS entry files so the hardcoded `id` field in the
- * plugin export matches the manifest.  Without this, the Gateway rejects
- * the plugin with "plugin id mismatch".
- */
-function patchPluginEntryIds(targetDir: string): void {
-  const pkgPath = join(targetDir, 'package.json');
-  let pkg: Record<string, unknown>;
-  try {
-    pkg = JSON.parse(readFileSync(fsPath(pkgPath), 'utf-8'));
-  } catch {
-    return;
-  }
-
-  const entryFiles = [pkg.main, pkg.module].filter(Boolean) as string[];
-
-  for (const entry of entryFiles) {
-    const entryPath = join(targetDir, entry);
-    if (!existsSync(fsPath(entryPath))) continue;
-
-    let content: string;
-    try {
-      content = readFileSync(fsPath(entryPath), 'utf-8');
-    } catch {
-      continue;
-    }
-
-    let patched = false;
-    for (const [wrongId, correctId] of Object.entries(MANIFEST_ID_FIXES)) {
-      // Match patterns like:  id: "wecom-openclaw-plugin"  or  id: 'wecom-openclaw-plugin'
-      const escapedWrongId = wrongId.replace(/-/g, '\\-');
-      const pattern = new RegExp(`(\\bid\\s*:\\s*)(["'])${escapedWrongId}\\2`, 'g');
-      const replaced = content.replace(pattern, `$1$2${correctId}$2`);
-      if (replaced !== content) {
-        content = replaced;
-        patched = true;
-        logger.info(`[plugin] Patched plugin ID in ${entry}: "${wrongId}" → "${correctId}"`);
-      }
-    }
-
-    if (patched) {
-      writeFileSync(fsPath(entryPath), content, 'utf-8');
-    }
-  }
-}
+// NOTE: Prior versions of this file contained MANIFEST_ID_FIXES,
+// fixupPluginManifest, and patchPluginEntryIds — MyClaw-side code that
+// rewrote openclaw.plugin.json manifests and compiled-JS `id:` fields
+// of plugins installed by openclaw itself, to work around a known
+// mismatch in the `wecom-openclaw-plugin` package (manifest id vs.
+// exported id).
+//
+// Deleted in accordance with ARCHITECTURE.md §11 — MyClaw is a
+// dashboard, not a fork.  Patching upstream plugin output is explicit
+// fork behaviour: the fix belongs upstream, not here.  Any resurgence
+// of the wecom ID mismatch should be an issue filed against the
+// `@wecom/wecom-openclaw-plugin` repo.
 
 // ── Plugin npm name mapping ──────────────────────────────────────────────────
 
@@ -406,7 +304,6 @@ export function ensurePluginInstalled(
         if (!existsSync(fsPath(join(targetDir, 'openclaw.plugin.json')))) {
           return { installed: false, warning: `Failed to install ${pluginLabel} plugin mirror (manifest missing).` };
         }
-        fixupPluginManifest(targetDir);
         logger.info(`Installed ${pluginLabel} plugin from preinstalled source: ${sourceDir}`);
         return { installed: true };
       } catch (error) {
@@ -453,7 +350,6 @@ export function ensurePluginInstalled(
           try {
             mkdirSync(fsPath(join(homedir(), '.openclaw', 'extensions')), { recursive: true });
             copyPluginFromNodeModules(npmPkgPath, targetDir, npmName);
-            fixupPluginManifest(targetDir);
             if (existsSync(fsPath(join(targetDir, 'openclaw.plugin.json')))) {
               return { installed: true };
             }
@@ -527,32 +423,8 @@ export function ensureWeChatPluginInstalled(): { installed: boolean; warning?: s
   return ensurePluginInstalled('openclaw-weixin', buildCandidateSources('openclaw-weixin'), 'WeChat');
 }
 
-// ── Bulk startup installer ───────────────────────────────────────────────────
-
-/**
- * All preinstalled plugins (what used to be called "bundled plugins").
- */
-const ALL_PREINSTALLED_PLUGINS = [
-  { fn: ensureWeComPluginInstalled, label: 'WeCom' },
-  { fn: ensureQQBotPluginInstalled, label: 'QQ Bot' },
-  { fn: ensureFeishuPluginInstalled, label: 'Feishu' },
-  { fn: ensureWeChatPluginInstalled, label: 'WeChat' },
-] as const;
-
-/**
- * Ensure all preinstalled OpenClaw channel plugins are installed/upgraded
- * in `~/.openclaw/extensions/`.  Designed to be called once at app startup
- * as a fire-and-forget task — errors are logged but never thrown.
- */
-export async function ensureAllPreinstalledPluginsInstalled(): Promise<void> {
-  for (const { fn, label } of ALL_PREINSTALLED_PLUGINS) {
-    try {
-      const result = fn();
-      if (result.warning) {
-        logger.warn(`[plugin] ${label}: ${result.warning}`);
-      }
-    } catch (error) {
-      logger.warn(`[plugin] Failed to install/upgrade ${label} plugin:`, error);
-    }
-  }
-}
+// NOTE: Prior versions also exported ensureAllPreinstalledPluginsInstalled
+// (a bulk startup installer that copied every channel plugin into
+// ~/.openclaw/extensions/).  Removed in d58ded2 after the MyClaw ↔
+// openclaw boundary was tightened — the startup path no longer writes
+// anywhere under ~/.openclaw/.
