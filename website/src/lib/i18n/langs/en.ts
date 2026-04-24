@@ -93,7 +93,7 @@ const en = {
         pageTitle: 'MyClaw Desktop',
         heroTitle1: 'MyClaw Desktop.',
         heroTitle2: 'Now Available.',
-        badge: 'v1.4.4 Released',
+        badge: 'v{{version}} Released',
         comingSoon: 'Coming Soon',
         description:
             'A powerful desktop client to manage your OpenClaw instances. Deploy, monitor, and control your claws — right from your machine. Free to download.',
@@ -179,7 +179,7 @@ const en = {
         statsLocally: 'Runs Locally',
         statsZero: 'Zero',
         statsZeroConfig: 'Zero Config',
-        statsVersion: 'v1.4.4',
+        statsVersion: 'v{{version}}',
         statsLatest: 'Latest Version',
         statsWindows: 'Win',
         statsPlatformWindows: 'Windows',

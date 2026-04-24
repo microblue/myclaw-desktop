@@ -1,16 +1,20 @@
 ---
 import { t, getLanguage } from '@/lib/i18n';
 import Icon from '@/components/icons/phosphor.astro';
+import DESKTOP_RELEASES from '@/data/desktopReleases';
 
 // Locale-aware internal links (e.g. /changelog/ vs /zh/changelog/).
 const lang = getLanguage();
 const localePrefix = lang === 'en' ? '' : `/${lang}`;
 const changelogHref = `${localePrefix}/changelog/`;
 
-// Download version is the pinned Desktop release that the buttons
-// point to.  See scripts/release-bump.mjs (Phase 8) — that script
-// will bump this constant and append a changelog entry in one go.
+// Latest release drives BOTH the download-button URLs and the
+// "What's new in v{version}" callout.  release-bump.mjs prepends
+// the new entry to desktopReleases.ts and updates DOWNLOAD_VERSION
+// in one shot, so these two stay in sync automatically.
 const DOWNLOAD_VERSION = '1.6.0';
+const LATEST = DESKTOP_RELEASES[0];
+const latestHighlights = LATEST.changes.filter(c => c.kind === 'highlight').slice(0, 3);
 const RELEASES_BASE = `https://github.com/microblue/myclaw-desktop-releases/releases/download/v${DOWNLOAD_VERSION}`;
 
 const features = [
@@ -72,11 +76,17 @@ const currentVersionText = t('go.currentVersion', { version: DOWNLOAD_VERSION })
 
     <div class="animate-hero-fade-in relative mx-auto max-w-6xl">
         <div class="flex flex-col items-center text-center">
-            <!-- Badge -->
-            <div class="mb-8 inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 shadow-sm">
+            <!-- Badge — links to the changelog for the latest version. -->
+            <a
+                href={changelogHref}
+                class="group mb-8 inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 shadow-sm transition-colors hover:border-brand/60"
+            >
                 <Icon name="sparkle" class="h-4 w-4 text-brand" />
-                <span class="text-sm text-foreground/80">{t('go.badge')}</span>
-            </div>
+                <span class="text-sm text-foreground/80">
+                    {t('go.badge', { version: DOWNLOAD_VERSION })}
+                </span>
+                <span class="text-muted-foreground transition-transform group-hover:translate-x-0.5">→</span>
+            </a>
 
             <!-- Hero title -->
             <h1 class="font-display mb-6 text-4xl font-bold leading-[1.08] tracking-tight md:text-6xl lg:text-7xl">
@@ -167,6 +177,53 @@ const currentVersionText = t('go.currentVersion', { version: DOWNLOAD_VERSION })
                     </div>
                 ))}
             </div>
+        </div>
+    </div>
+</section>
+
+<!-- What's new in latest release -->
+<section class="relative border-t border-border px-6 py-20">
+    <div class="relative mx-auto max-w-3xl">
+        <div class="rounded-2xl border border-brand/20 bg-gradient-to-br from-brand/[0.08] to-transparent p-8">
+            <div class="flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                    <div class="mb-2 flex items-center gap-2">
+                        <span class="inline-flex items-center rounded-full bg-brand/20 px-2.5 py-0.5 text-xs font-semibold text-brand">
+                            {lang === 'zh' ? '新版本' : 'NEW'}
+                        </span>
+                        <span class="text-sm text-muted-foreground">
+                            {new Intl.DateTimeFormat(
+                                lang === 'zh' ? 'zh-CN' : 'en-US',
+                                { year: 'numeric', month: 'long', day: 'numeric' },
+                            ).format(new Date(LATEST.date))}
+                        </span>
+                    </div>
+                    <h2 class="font-display text-2xl font-bold text-foreground">
+                        {lang === 'zh' ? 'v' : "What's new in v"}{LATEST.version}{lang === 'zh' ? ' 有什么新内容' : ''}
+                    </h2>
+                </div>
+                <a
+                    href={changelogHref}
+                    class="text-sm font-medium text-brand underline underline-offset-4 hover:text-brand-light"
+                >
+                    {lang === 'zh' ? '查看所有版本更新' : 'View all releases'} →
+                </a>
+            </div>
+
+            <ul class="mt-6 space-y-2.5">
+                {latestHighlights.map((change) => (
+                    <li class="flex gap-3">
+                        <Icon name="sparkle" class="mt-0.5 h-4 w-4 shrink-0 text-brand" />
+                        <span
+                            class="text-sm leading-relaxed text-muted-foreground"
+                            set:html={change.text.replace(
+                                /`([^`]+)`/g,
+                                '<code class="rounded bg-white/10 px-1.5 py-0.5 text-[0.85em] text-foreground">$1</code>'
+                            )}
+                        />
+                    </li>
+                ))}
+            </ul>
         </div>
     </div>
 </section>

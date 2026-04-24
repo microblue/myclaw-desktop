@@ -95,7 +95,7 @@ const zh: Translations = {
         pageTitle: 'MyClaw Desktop',
         heroTitle1: 'MyClaw.One 桌面版.',
         heroTitle2: '正式发布.',
-        badge: 'v1.4.4 正式发布',
+        badge: 'v{{version}} 正式发布',
         comingSoon: '即将推出',
         description:
             '功能强大的桌面客户端，用于管理您的 OpenClaw 实例。部署、监控和控制您的 claws — 直接在您的设备上完成。免费下载.',
@@ -180,7 +180,7 @@ const zh: Translations = {
         statsLocally: '本地运行',
         statsZero: '零',
         statsZeroConfig: '零配置',
-        statsVersion: 'v1.4.4',
+        statsVersion: 'v{{version}}',
         statsLatest: '最新版本',
         statsWindows: 'Win',
         statsPlatformWindows: 'Windows',
