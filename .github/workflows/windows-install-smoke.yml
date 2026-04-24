@@ -279,17 +279,24 @@ jobs:
           $entry = "${{ steps.layer4a.outputs.entry }}"
           $runtime = "${{ steps.layer3.outputs.runtime }}"
 
+          # Isolate openclaw state entirely under our scratch prefix so
+          # we are NOT inheriting the runner's ~/.openclaw/ (which may
+          # contain a stale lock file or partial state from openclaw's
+          # own postinstall during Layer 3).  OPENCLAW_STATE_DIR is
+          # openclaw's first-class override for the data directory.
+          $stateDir = Join-Path $runtime "openclaw-state"
+          if (Test-Path $stateDir) { Remove-Item -Recurse -Force $stateDir }
+          New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
+          $env:OPENCLAW_STATE_DIR = $stateDir
+          Write-Host "OPENCLAW_STATE_DIR=$stateDir"
+
           $stdoutLog = Join-Path $runtime "gateway-stdout.log"
           $stderrLog = Join-Path $runtime "gateway-stderr.log"
 
           # --allow-unconfigured lets openclaw gateway start without a
-          # fully-populated openclaw.json (no provider, no channels).
-          # This layer is asking "can our bundled Node + fetched runtime
-          # actually reach a running gateway?", not "can it chat?".
-          # Production MyClaw does NOT use this flag — its config-sync
-          # writes provider / gateway.token / channels into openclaw.json
-          # before spawning.  If Layer 5 (MyClaw full launch) later fails
-          # to bind, the bug is in MyClaw's config-sync path, not here.
+          # fully-populated openclaw.json.  Production MyClaw does NOT
+          # use this flag — its config-sync writes provider + token +
+          # channels to openclaw.json before spawning.
           Write-Host "Spawning: $node $entry gateway run --allow-unconfigured"
           $gw = Start-Process -FilePath $node `
                               -ArgumentList $entry, 'gateway', 'run', '--allow-unconfigured' `
@@ -307,24 +314,30 @@ jobs:
             throw "LAYER 4b FAIL: gateway exited immediately with code $($gw.ExitCode)"
           }
           "pid=$($gw.Id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "LAYER 4b OK: pid $($gw.Id) alive after 5s"
+          "state_dir=$stateDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "LAYER 4b OK: pid $($gw.Id) alive after 5s (state dir=$stateDir)"
 
       - name: Layer 4c — gateway binds 18789 within 180s
         shell: pwsh
         run: |
-          # NOTE: $pid is a PowerShell read-only automatic variable (current
-          # process's PID) — using it as a local name crashes on first line
-          # with "Cannot overwrite variable PID because it is read-only".
-          # Use $gwPid instead.
+          # NOTE: $pid is a PowerShell read-only automatic variable — use $gwPid.
           $gwPid = [int]"${{ steps.layer4b.outputs.pid }}"
           $runtime = "${{ steps.layer3.outputs.runtime }}"
+          $stateDir = "${{ steps.layer4b.outputs.state_dir }}"
           $deadline = (Get-Date).AddSeconds(180)
           $listening = $false
+          $exitCode = $null
 
           while ((Get-Date) -lt $deadline) {
             $gwAlive = Get-Process -Id $gwPid -ErrorAction SilentlyContinue
             if (-not $gwAlive) {
-              Write-Host "Gateway PID $gwPid died before binding"
+              # Try to recover the exit code — Get-Process on a dead PID
+              # returns null but WMI may still have it briefly.
+              try {
+                $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$gwPid" -ErrorAction SilentlyContinue
+                if ($cim -and $cim.ExitCode -ne $null) { $exitCode = $cim.ExitCode }
+              } catch {}
+              Write-Host "Gateway PID $gwPid died before binding (exit code: $exitCode)"
               break
             }
             $conn = Get-NetTCPConnection -LocalPort 18789 -State Listen -ErrorAction SilentlyContinue
@@ -338,15 +351,25 @@ jobs:
           }
 
           Write-Host ""
-          Write-Host "=== gateway-stdout.log tail ==="
-          Get-Content (Join-Path $runtime "gateway-stdout.log") -Tail 40 -ErrorAction SilentlyContinue
-          Write-Host "=== gateway-stderr.log tail ==="
-          Get-Content (Join-Path $runtime "gateway-stderr.log") -Tail 40 -ErrorAction SilentlyContinue
+          Write-Host "=== gateway-stdout.log (full) ==="
+          Get-Content (Join-Path $runtime "gateway-stdout.log") -ErrorAction SilentlyContinue
+          Write-Host ""
+          Write-Host "=== gateway-stderr.log (full) ==="
+          Get-Content (Join-Path $runtime "gateway-stderr.log") -ErrorAction SilentlyContinue
+
+          Write-Host ""
+          Write-Host "=== $stateDir contents ==="
+          if (Test-Path $stateDir) {
+            Get-ChildItem $stateDir -Recurse -Force -ErrorAction SilentlyContinue |
+              Select-Object -First 40 | Format-Table FullName, Length
+          } else {
+            Write-Host "(state dir not created — openclaw never got that far?)"
+          }
 
           try { Stop-Process -Id $gwPid -Force -ErrorAction SilentlyContinue } catch {}
           Start-Sleep -Seconds 3
 
-          if (-not $listening) { throw "LAYER 4c FAIL: 18789 never listened" }
+          if (-not $listening) { throw "LAYER 4c FAIL: 18789 never listened (gateway exit code: $exitCode)" }
 
       - name: Launch installed app (sanity check binary boots)
         shell: pwsh
