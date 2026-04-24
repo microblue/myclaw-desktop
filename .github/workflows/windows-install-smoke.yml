@@ -500,8 +500,22 @@ jobs:
         shell: pwsh
         run: |
           $exe = "${{ steps.install-path.outputs.exe }}"
-          Write-Host "Launching: $exe"
-          Start-Process -FilePath $exe -ArgumentList ''
+
+          # Capture Electron/Chromium logs via --enable-logging.  With
+          # value 'file', Chromium writes everything (including JS console
+          # output from the main process and uncaught exceptions during
+          # pre-ready bootstrap) to a specified log file.  Prior runs
+          # showed MyClaw.One alive but with only 0.38s CPU over 900s —
+          # meaning the main bundle loaded but something blocks before
+          # app.whenReady() fires.  electron-log won't help because our
+          # logger.init() runs inside initialize() which is gated on
+          # whenReady.  Chromium's own logger has no such gate.
+          $chromiumLog = Join-Path $env:USERPROFILE "myclaw-chromium.log"
+          if (Test-Path $chromiumLog) { Remove-Item $chromiumLog -Force }
+
+          Write-Host "Launching: $exe --enable-logging=file --log-file=$chromiumLog --v=1"
+          Start-Process -FilePath $exe `
+                        -ArgumentList "--enable-logging=file","--log-file=$chromiumLog","--v=1"
           Start-Sleep -Seconds 5
 
           $myclaw = Get-Process -Name "MyClaw.One" -ErrorAction SilentlyContinue
@@ -597,6 +611,18 @@ jobs:
                 Get-Content $latest.FullName -Tail 200
               }
             }
+          }
+
+          # Chromium/Electron log — captures pre-ready errors that
+          # electron-log can't see (since our logger.init() runs inside
+          # initialize() which is gated on app.whenReady).
+          if (Test-Path $chromiumLog) {
+            Write-Host ""
+            Write-Host "=== Chromium log (full) at $chromiumLog ==="
+            Get-Content $chromiumLog
+          } else {
+            Write-Host ""
+            Write-Host "(Chromium log not produced at $chromiumLog — either bootstrapping never reached logger init or the flag was ignored)"
           }
 
           if (-not $found) {
