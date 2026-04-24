@@ -393,13 +393,15 @@ interface OpenClawSetupSpec {
 
 function run_openclaw_setup(spec: OpenClawSetupSpec): Promise<void> {
   return new Promise((resolve, reject) => {
-    // openclaw's `setup --non-interactive` refuses to run without
-    // explicit `--accept-risk`.  MyClaw is a dashboard; accepting the
-    // non-interactive-setup risk on the user's behalf is exactly what
-    // we're here for.
+    // `openclaw setup --non-interactive` refuses to run and points at
+    // `openclaw onboard --non-interactive --accept-risk` as the correct
+    // non-interactive bootstrap command.  setup is user-facing interactive;
+    // onboard is the scriptable equivalent.  MyClaw is a dashboard —
+    // accepting the non-interactive risk on the user's behalf is
+    // exactly the job.
     const args = [
       spec.openclaw_entry,
-      'setup',
+      'onboard',
       '--non-interactive',
       '--accept-risk',
       '--mode', 'local',

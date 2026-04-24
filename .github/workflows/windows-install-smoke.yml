@@ -271,12 +271,13 @@ jobs:
           "entry=$entry" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "LAYER 4a OK: $entry"
 
-      - name: Layer 4a.5 — openclaw setup --non-interactive (bootstrap config)
+      - name: Layer 4a.5 — openclaw onboard --non-interactive (bootstrap config)
         # npm install only places openclaw's files on disk — it does NOT
         # produce an ~/.openclaw/openclaw.json.  Production MyClaw's
-        # ensure_myclaw_runtime_installed now invokes `openclaw setup
-        # --non-interactive --mode local` right after npm install for
-        # exactly this reason.  Layer 4 mirrors that.
+        # ensure_myclaw_runtime_installed now invokes `openclaw onboard
+        # --non-interactive --accept-risk --mode local` right after npm
+        # install for exactly this reason (the interactive `setup` command
+        # points to `onboard` as the scriptable equivalent).  Layer 4 mirrors.
         id: layer4_setup
         shell: pwsh
         run: |
@@ -295,8 +296,8 @@ jobs:
           Write-Host "OPENCLAW_STATE_DIR=$stateDir"
 
           $setupLog = Join-Path $runtime "setup.log"
-          Write-Host "Running: $node $entry setup --non-interactive --accept-risk --mode local"
-          & $node $entry setup --non-interactive --accept-risk --mode local 2>&1 | Tee-Object -FilePath $setupLog
+          Write-Host "Running: $node $entry onboard --non-interactive --accept-risk --mode local"
+          & $node $entry onboard --non-interactive --accept-risk --mode local 2>&1 | Tee-Object -FilePath $setupLog
           $rc = $LASTEXITCODE
 
           Write-Host ""
@@ -304,7 +305,7 @@ jobs:
           Get-Content $setupLog -Tail 40 -ErrorAction SilentlyContinue
 
           if ($rc -ne 0) {
-            throw "LAYER 4a.5 FAIL: openclaw setup exited $rc"
+            throw "LAYER 4a.5 FAIL: openclaw onboard exited $rc"
           }
 
           # Verify the config file openclaw will read at gateway start.
