@@ -523,7 +523,30 @@ jobs:
           Start-Sleep -Seconds 5
 
           $myclaw = Get-Process -Name "MyClaw.One" -ErrorAction SilentlyContinue
-          if (-not $myclaw) { throw "MyClaw.One process did not launch" }
+          if (-not $myclaw) {
+            # Dump immediately — if MyClaw quit within 5s, the redirected logs
+            # still hold whatever it wrote before exit.  Failing cleanly with
+            # this info is far more useful than throwing blind.
+            Write-Host "MyClaw.One NOT running after 5s — it either never spawned or already exited."
+            foreach ($label in @('stdout', 'stderr')) {
+              $path = if ($label -eq 'stdout') { $outLog } else { $errLog }
+              Write-Host ""
+              Write-Host "=== MyClaw $label at $path ==="
+              if (Test-Path $path) {
+                $size = (Get-Item $path).Length
+                Write-Host "  size: $size bytes"
+                Get-Content $path
+              } else {
+                Write-Host "  (file not created — redirect didn't take effect)"
+              }
+            }
+            # Also check for any cmd.exe leftovers that might explain the spawn
+            Write-Host ""
+            Write-Host "=== Any cmd/node/MyClaw processes ==="
+            Get-Process | Where-Object { $_.ProcessName -match "cmd|MyClaw|node" } |
+              Format-Table Id, ProcessName, StartTime
+            throw "MyClaw.One process did not stay alive for 5s"
+          }
           Write-Host "MyClaw PID: $($myclaw[0].Id)"
 
           # Candidate paths where MyClaw writes files during init.  These
