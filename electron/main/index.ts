@@ -24,7 +24,6 @@ import {
   check_version_compat,
   ensure_myclaw_runtime_installed,
   ensure_openclaw_onboarded,
-  get_bundled_node_path,
   get_openclaw_install_state,
   read_openclaw_tested_range,
 } from '../utils/openclaw_install';
@@ -343,33 +342,25 @@ async function initialize(): Promise<void> {
         logger.info('[myclaw-runtime] runtime already current');
       }
 
-      // Step 2: ensure openclaw's own config bootstrap has run.  Separate
-      // from Step 1 so that (a) a user who deletes ~/.openclaw/ recovers
-      // on next launch without reinstalling the runtime, and (b) the
-      // failure modes don't blur together.
-      const node_binary = get_bundled_node_path(process.resourcesPath);
-      const openclaw_entry = join(
-        state.runtime_dir,
-        'node_modules',
-        'openclaw',
-        'openclaw.mjs',
-      );
-      const onboard_start = Date.now();
+      // Step 2: ensure openclaw has a config file to start from.  If
+      // ~/.openclaw/openclaw.json is missing we write the single-field
+      // minimum (`{gateway:{mode:local}}`) directly rather than spawning
+      // `openclaw onboard` — onboard's non-interactive mode proved
+      // undocumented and hangs on undetected required prompts.
+      // MyClaw's UI wizard + sync* functions fill in providers /
+      // channels / auth later.
       const onboard_result = await ensure_openclaw_onboarded({
-        node_binary,
-        openclaw_entry,
         on_log: (line) => {
           logger.info(`[myclaw-runtime] [onboard] ${line}`);
           progress?.append_log(line);
         },
       });
       if (onboard_result.was_onboarded) {
-        const onboard_elapsed = ((Date.now() - onboard_start) / 1000).toFixed(1);
         logger.info(
-          `[myclaw-runtime] openclaw onboard complete: ${onboard_result.config_path} (${onboard_elapsed}s)`,
+          `[myclaw-runtime] wrote minimal openclaw config: ${onboard_result.config_path}`,
         );
       } else {
-        logger.info(`[myclaw-runtime] openclaw already onboarded: ${onboard_result.config_path}`);
+        logger.info(`[myclaw-runtime] openclaw config already present: ${onboard_result.config_path}`);
       }
     } else {
       logger.info('[myclaw-runtime] dev mode — using workspace-installed openclaw');

@@ -14,7 +14,7 @@
  * package.json — one MyClaw release == one openclaw version.
  */
 import { spawn } from 'child_process';
-import { existsSync, mkdirSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 
@@ -372,10 +372,6 @@ export async function ensure_myclaw_runtime_installed(
 // ── openclaw config bootstrap (onboard) ──────────────────────────────────────
 
 export interface OpenClawOnboardOptions {
-  /** Absolute path to the bundled node binary used to spawn openclaw. */
-  node_binary: string;
-  /** Absolute path to openclaw.mjs under the runtime's node_modules. */
-  openclaw_entry: string;
   /**
    * openclaw state / config directory.  Defaults to `<home>/.openclaw`.
    * Production MyClaw omits this to use openclaw's standard location;
@@ -388,31 +384,34 @@ export interface OpenClawOnboardOptions {
 export interface OpenClawOnboardResult {
   /** Absolute path to the openclaw.json that exists after this call. */
   config_path: string;
-  /**
-   * True if we just created the config by spawning `openclaw onboard`;
-   * false if it was already there and we skipped.
-   */
+  /** True if we just wrote the minimal config; false if it was already present. */
   was_onboarded: boolean;
 }
 
 /**
- * Ensure openclaw's own configuration bootstrap has been run.
+ * Ensure openclaw has a minimal config file at `<state_dir>/openclaw.json`.
  *
- * Checks for `<state_dir>/openclaw.json`; if missing, spawns
- * `openclaw onboard --non-interactive --accept-risk --mode local`
- * (the scriptable equivalent of the interactive `openclaw setup`
- * wizard — `setup --non-interactive` explicitly redirects to onboard).
+ * If the file already exists we leave it alone.  If missing, MyClaw
+ * writes a MINIMAL file with just enough fields for openclaw to start
+ * (and then fill in every other field from its own runtime defaults):
  *
- * Idempotent: a second call with the config present is a cheap file
- * existence check.  Keeping the two steps separate (npm install vs
- * config bootstrap) means a user who deletes ~/.openclaw/ can recover
- * without reinstalling the runtime — next launch re-onboards.
+ *   { "gateway": { "mode": "local" } }
  *
- * After this returns, MyClaw's UI wizard + `syncXxxToOpenClaw`
- * functions take over for user-level fields (provider / API key /
- * channels).  This helper never writes user-level data — that's
- * openclaw's own onboarding defaults plus whatever MyClaw's sync
- * functions merge in afterwards.
+ * `gateway.mode=local` is the field openclaw's own "Missing config"
+ * error message explicitly tells the user to set as an alternative to
+ * running `openclaw setup`.  That makes it the contract boundary — the
+ * single field MyClaw commits to owning as part of bootstrap.  Every
+ * other field (providers, channels, gateway.auth, agents.*, etc.) is
+ * either openclaw's runtime default or gets merged in later by
+ * MyClaw's UI wizard through the sync* functions.
+ *
+ * Why not spawn `openclaw onboard` instead?  Tried it — onboard's
+ * non-interactive mode requires every in-flow prompt to have an
+ * explicit answer-flag, of which there are many and undocumented.
+ * Each missing one hangs the bootstrap indefinitely.  Writing one
+ * well-known field ourselves is simpler, faster, and keeps MyClaw
+ * aligned with the dashboard principle: we own the fields we know,
+ * openclaw owns the rest via its runtime defaults.
  */
 export async function ensure_openclaw_onboarded(
   options: OpenClawOnboardOptions,
@@ -424,70 +423,12 @@ export async function ensure_openclaw_onboarded(
     return { config_path, was_onboarded: false };
   }
 
-  await run_openclaw_onboard({
-    node_binary: options.node_binary,
-    openclaw_entry: options.openclaw_entry,
-    state_dir: options.state_dir,
-    on_log: options.on_log,
-  });
+  mkdirSync(state_dir, { recursive: true });
+  const minimal_config = { gateway: { mode: 'local' } };
+  writeFileSync(config_path, JSON.stringify(minimal_config, null, 2) + '\n', 'utf-8');
+  options.on_log?.(`wrote minimal config to ${config_path}`);
 
   return { config_path, was_onboarded: true };
-}
-
-interface OpenClawOnboardSpec {
-  node_binary: string;
-  openclaw_entry: string;
-  state_dir?: string;
-  on_log?: (line: string) => void;
-}
-
-function run_openclaw_onboard(spec: OpenClawOnboardSpec): Promise<void> {
-  return new Promise((resolve, reject) => {
-    // Flags chosen specifically for a scripted bootstrap where MyClaw
-    // will own every subsequent config decision via its own UI:
-    //
-    //   --non-interactive  — no prompts
-    //   --accept-risk      — required by openclaw for non-interactive
-    //   --mode local       — MyClaw is always local
-    //   --flow quickstart  — shortest path through onboard's state machine
-    //   --auth-choice skip — do NOT configure a provider here.  MyClaw's
-    //                        UI will collect provider + API key from the
-    //                        user and merge them into openclaw.json via
-    //                        the sync* functions.  Without --auth-choice
-    //                        onboard --non-interactive hangs waiting for
-    //                        the auth selection that no one will provide.
-    const args = [
-      spec.openclaw_entry,
-      'onboard',
-      '--non-interactive',
-      '--accept-risk',
-      '--mode', 'local',
-      '--flow', 'quickstart',
-      '--auth-choice', 'skip',
-    ];
-    const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: 'production' };
-    if (spec.state_dir) env.OPENCLAW_STATE_DIR = spec.state_dir;
-
-    const child = spawn(spec.node_binary, args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env,
-    });
-
-    const pipe_lines = (chunk: Buffer) => {
-      if (!spec.on_log) return;
-      for (const line of chunk.toString().split(/\r?\n/)) {
-        if (line.trim()) spec.on_log(`[setup] ${line}`);
-      }
-    };
-
-    child.stdout?.on('data', pipe_lines);
-    child.stderr?.on('data', pipe_lines);
-    child.on('error', reject);
-    child.on('exit', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`openclaw setup exited with code ${code}`));
-    });
-  });
 }
 
 interface NpmInstallSpec {
