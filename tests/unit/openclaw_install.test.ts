@@ -155,7 +155,7 @@ describe('needs_reinstall', () => {
     expect(needs_reinstall('2026.4.22', null)).toBe(true);
   });
 
-  it('true when installed version differs from configured', async () => {
+  it('true when installed is older than configured', async () => {
     const { needs_reinstall } = await import('@electron/utils/openclaw_install');
     expect(needs_reinstall('2026.4.22', '2026.4.5')).toBe(true);
   });
@@ -165,9 +165,112 @@ describe('needs_reinstall', () => {
     expect(needs_reinstall('2026.4.22', '2026.4.22')).toBe(false);
   });
 
-  it('exact match — no semver range logic (openclaw uses calendar versioning)', async () => {
+  it('false when installed is NEWER than configured — do not roll back user upgrades', async () => {
     const { needs_reinstall } = await import('@electron/utils/openclaw_install');
-    expect(needs_reinstall('2026.4.22', '2026.4.23')).toBe(true);
+    // The v1.5 exact-match semantics would have returned true here,
+    // forcing every user-upgraded openclaw back down to the pin on
+    // next launch.  ARCHITECTURE.md §12 requires that user-driven
+    // upgrades are respected.
+    expect(needs_reinstall('2026.4.22', '2026.4.23')).toBe(false);
+    expect(needs_reinstall('2026.4.22', '2026.5.0')).toBe(false);
+  });
+
+  it('handles multi-digit components correctly (string-compare bug)', async () => {
+    const { needs_reinstall } = await import('@electron/utils/openclaw_install');
+    // Naive string compare: "2026.4.9" > "2026.4.22" (because '9' > '2')
+    // Calendar-numeric compare: 9 < 22
+    expect(needs_reinstall('2026.4.22', '2026.4.9')).toBe(true);
+    expect(needs_reinstall('2026.4.9', '2026.4.22')).toBe(false);
+  });
+});
+
+describe('parse_calver / compare_calver', () => {
+  it('parses well-formed versions', async () => {
+    const { parse_calver } = await import('@electron/utils/openclaw_install');
+    expect(parse_calver('2026.4.22')).toEqual([2026, 4, 22]);
+    expect(parse_calver('0.11.0')).toEqual([0, 11, 0]);
+  });
+
+  it('returns null for non-numeric components', async () => {
+    const { parse_calver } = await import('@electron/utils/openclaw_install');
+    expect(parse_calver('2026.4.22-beta')).toBeNull();
+    expect(parse_calver('hello')).toBeNull();
+  });
+
+  it('compares numerically, not lexicographically', async () => {
+    const { compare_calver } = await import('@electron/utils/openclaw_install');
+    expect(compare_calver('2026.4.22', '2026.4.9')).toBeGreaterThan(0);
+    expect(compare_calver('2026.4.9', '2026.4.22')).toBeLessThan(0);
+    expect(compare_calver('2026.4.22', '2026.4.22')).toBe(0);
+    expect(compare_calver('2027.1.0', '2026.12.99')).toBeGreaterThan(0);
+  });
+
+  it('treats missing trailing components as zero', async () => {
+    const { compare_calver } = await import('@electron/utils/openclaw_install');
+    expect(compare_calver('2026.4', '2026.4.0')).toBe(0);
+    expect(compare_calver('2026.4', '2026.4.1')).toBeLessThan(0);
+  });
+});
+
+describe('read_openclaw_tested_range', () => {
+  beforeEach(async () => {
+    vi.resetModules();
+    await rm(test_root, { recursive: true, force: true });
+    await mkdir(test_root, { recursive: true });
+  });
+
+  it('returns the { min, max } range when declared', async () => {
+    await write_pkg_json(test_root, {
+      version: '2026.4.22',
+      tested_compatible: { min: '2026.4.20', max: '2026.4.30' },
+    } as Record<string, unknown>);
+    const { read_openclaw_tested_range } = await import('@electron/utils/openclaw_install');
+    expect(read_openclaw_tested_range(test_root)).toEqual({
+      min: '2026.4.20',
+      max: '2026.4.30',
+    });
+  });
+
+  it('returns empty object when tested_compatible is absent', async () => {
+    await write_pkg_json(test_root, { version: '2026.4.22' });
+    const { read_openclaw_tested_range } = await import('@electron/utils/openclaw_install');
+    expect(read_openclaw_tested_range(test_root)).toEqual({});
+  });
+
+  it('returns empty object when backend spec is missing entirely', async () => {
+    await write_pkg_json(test_root, undefined);
+    const { read_openclaw_tested_range } = await import('@electron/utils/openclaw_install');
+    expect(read_openclaw_tested_range(test_root)).toEqual({});
+  });
+});
+
+describe('check_version_compat', () => {
+  it('ok when inside range', async () => {
+    const { check_version_compat } = await import('@electron/utils/openclaw_install');
+    expect(check_version_compat('2026.4.22', { min: '2026.4.20', max: '2026.4.30' }))
+      .toEqual({ kind: 'ok' });
+  });
+
+  it('below_min when installed is older than min', async () => {
+    const { check_version_compat } = await import('@electron/utils/openclaw_install');
+    expect(check_version_compat('2026.4.10', { min: '2026.4.20' }))
+      .toEqual({ kind: 'below_min', installed: '2026.4.10', min: '2026.4.20' });
+  });
+
+  it('above_max when installed is newer than max', async () => {
+    const { check_version_compat } = await import('@electron/utils/openclaw_install');
+    expect(check_version_compat('2026.5.0', { max: '2026.4.30' }))
+      .toEqual({ kind: 'above_max', installed: '2026.5.0', max: '2026.4.30' });
+  });
+
+  it('ok when range is empty (no compat check configured)', async () => {
+    const { check_version_compat } = await import('@electron/utils/openclaw_install');
+    expect(check_version_compat('2026.4.22', {})).toEqual({ kind: 'ok' });
+  });
+
+  it('only min set — unbounded max', async () => {
+    const { check_version_compat } = await import('@electron/utils/openclaw_install');
+    expect(check_version_compat('2099.1.1', { min: '2026.4.20' })).toEqual({ kind: 'ok' });
   });
 });
 

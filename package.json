@@ -5,6 +5,9 @@
     "available_backends": {
         "openclaw": {
             "version": "2026.4.22",
+            "tested_compatible": {
+                "min": "2026.4.22"
+            },
             "preinstalled_plugins": {
                 "@wecom/wecom-openclaw-plugin": "^2026.4.3",
                 "@tencent-connect/openclaw-qqbot": "^1.7.1",

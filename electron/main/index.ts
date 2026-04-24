@@ -21,8 +21,10 @@ import { ensureMyClawContext, repairMyClawOnlyBootstrapFiles } from '../utils/op
 import { autoInstallCliIfNeeded, generateCompletionCache, installCompletionToProfile } from '../utils/openclaw-cli';
 import { hasResetOpenClawFlag, resetOpenClawData } from '../utils/reset-openclaw';
 import {
+  check_version_compat,
   ensure_myclaw_runtime_installed,
   get_openclaw_install_state,
+  read_openclaw_tested_range,
 } from '../utils/openclaw_install';
 import {
   show_runtime_progress_window,
@@ -335,6 +337,32 @@ async function initialize(): Promise<void> {
       logger.info('[myclaw-runtime] dev mode — using workspace-installed openclaw');
     } else {
       logger.info('[myclaw-runtime] already current');
+    }
+
+    // Compatibility check: the installed version may be NEWER than the pin
+    // (user triggered an upgrade via UI or CLI) or OLDER (stale runtime
+    // dir).  Warn non-blockingly if it falls outside the tested range
+    // declared in package.json.  The app still starts either way — this
+    // is informational, not a gate.
+    if (app.isPackaged) {
+      const installed = state.installed_version ?? state.configured_version;
+      const range = read_openclaw_tested_range(app.getAppPath());
+      const compat = check_version_compat(installed, range);
+      if (compat.kind !== 'ok') {
+        const { dialog } = await import('electron');
+        const message =
+          compat.kind === 'below_min'
+            ? `Your MyClaw runtime is at version ${compat.installed}, which is older than the tested minimum ${compat.min}.  Things may not work as expected.`
+            : `Your MyClaw runtime is at version ${compat.installed}, which is newer than the tested maximum ${compat.max}.  This is usually fine, but behaviour may change.`;
+        logger.warn(`[myclaw-runtime] compat ${compat.kind}: installed=${compat.installed}`);
+        dialog.showMessageBox({
+          type: compat.kind === 'below_min' ? 'warning' : 'info',
+          title: 'MyClaw runtime version check',
+          message,
+          buttons: ['OK'],
+          defaultId: 0,
+        }).catch(() => { /* dialog already closed */ });
+      }
     }
   } catch (err) {
     logger.error('[myclaw-runtime] init failed:', err);

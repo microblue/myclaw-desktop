@@ -17,8 +17,16 @@ import { spawn } from 'child_process';
 import { mkdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 
+export interface TestedCompatibleRange {
+  /** Lowest openclaw version MyClaw has been exercised against. */
+  min?: string;
+  /** Highest openclaw version tested.  Absent = no upper bound. */
+  max?: string;
+}
+
 interface BackendSpec {
   version?: string;
+  tested_compatible?: TestedCompatibleRange;
   preinstalled_plugins?: Record<string, string>;
 }
 
@@ -131,17 +139,97 @@ export function get_openclaw_runtime_package_dir(home_dir: string): string {
 }
 
 /**
- * Decide whether we need to (re)install openclaw.
+ * Parse an openclaw calendar-style version string into a comparable
+ * numeric tuple.  Returns null if the input isn't well-formed.
  *
- * True when: not installed at all, or installed version differs from the
- * pinned version.  We deliberately DON'T do semver "range" comparisons —
- * exact match only, because openclaw doesn't follow semver.
+ * "2026.4.22" -> [2026, 4, 22]
+ */
+export function parse_calver(version: string): number[] | null {
+  const parts = version.split('.').map((s) => {
+    const n = Number(s);
+    return Number.isFinite(n) ? n : NaN;
+  });
+  if (parts.some((n) => Number.isNaN(n))) return null;
+  return parts;
+}
+
+/**
+ * Compare two calendar-version strings.  Returns negative if a<b, zero
+ * if equal, positive if a>b.  Non-parseable versions fall back to
+ * string comparison as a last resort.
+ */
+export function compare_calver(a: string, b: string): number {
+  const pa = parse_calver(a);
+  const pb = parse_calver(b);
+  if (!pa || !pb) return a < b ? -1 : a > b ? 1 : 0;
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const x = pa[i] ?? 0;
+    const y = pb[i] ?? 0;
+    if (x !== y) return x - y;
+  }
+  return 0;
+}
+
+/**
+ * Decide whether MyClaw should (re)install openclaw.
+ *
+ * - null installed → yes, fresh install
+ * - installed < configured → yes, user somehow downgraded / stale dir, reinstall the pin
+ * - installed >= configured → NO, leave it alone (user may have manually
+ *   upgraded via UI / CLI to a newer openclaw — MyClaw does not silently
+ *   roll that back)
+ *
+ * The old "exact match" semantics from v1.5 was incorrect: it forced any
+ * newer openclaw back down to the pinned version on every launch,
+ * making user-controlled upgrades impossible.  Per ARCHITECTURE.md §12
+ * MyClaw's job is to provide a default install and warn about out-of-
+ * range versions, not to pin users.
  */
 export function needs_reinstall(
   configured_version: string,
   installed_version: string | null,
 ): boolean {
-  return installed_version !== configured_version;
+  if (installed_version === null) return true;
+  return compare_calver(installed_version, configured_version) < 0;
+}
+
+/**
+ * Read the backend's tested-compatible version range from package.json.
+ * Returns an empty object (no bounds) if the field is missing — callers
+ * treat that as "no compatibility check configured".
+ */
+export function read_openclaw_tested_range(app_path: string): TestedCompatibleRange {
+  try {
+    const spec = read_backend_spec(app_path, 'openclaw');
+    return spec.tested_compatible ?? {};
+  } catch {
+    return {};
+  }
+}
+
+export type VersionCompatStatus =
+  | { kind: 'ok' }
+  | { kind: 'below_min'; installed: string; min: string }
+  | { kind: 'above_max'; installed: string; max: string };
+
+/**
+ * Check an installed openclaw version against the declared tested range.
+ * Returns 'ok' when the range is absent or the version falls inside.
+ * Out-of-range is reported for the caller to surface as a non-blocking
+ * warning (dialog / log) — we never block the app from starting.
+ */
+export function check_version_compat(
+  installed_version: string,
+  range: TestedCompatibleRange,
+): VersionCompatStatus {
+  if (range.min && compare_calver(installed_version, range.min) < 0) {
+    return { kind: 'below_min', installed: installed_version, min: range.min };
+  }
+  if (range.max && compare_calver(installed_version, range.max) > 0) {
+    return { kind: 'above_max', installed: installed_version, max: range.max };
+  }
+  return { kind: 'ok' };
 }
 
 /**
