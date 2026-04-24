@@ -103,53 +103,27 @@ jobs:
           "dir=$installDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Get-ChildItem $installDir | Format-Table Name, Length
 
-      - name: Launch installed app
+      - name: Post-install E2E (launch exe + chat + channel install via Playwright)
+        # Replaces the previous three-step "launch / wait for gateway / HTTP
+        # probe" sanity check with a real user-journey spec:
+        #   - Launch the INSTALLED MyClaw.One.exe via Playwright Electron
+        #   - Wait through the first-launch splash (runtime npm install)
+        #   - Skip setup wizard, seed OpenRouter + Google Flash Lite via IPC
+        #   - Start gateway, confirm running
+        #   - Send a chat message, assert a live LLM response
+        #   - Configure WeCom channel → triggers
+        #     `openclaw plugins install @wecom/wecom-openclaw-plugin`
+        #   - Assert channel install succeeded
+        #
+        # The test skips automatically when OPENROUTER_TEST_API_KEY is
+        # absent, so forks without the secret still get a green signal
+        # (the install step itself proved the binary runs).
         shell: pwsh
+        env:
+          MYCLAW_INSTALLED_EXE: ${{ steps.install-path.outputs.exe }}
+          OPENROUTER_TEST_API_KEY: ${{ secrets.OPENROUTER_TEST_API_KEY }}
         run: |
-          $exe = "${{ steps.install-path.outputs.exe }}"
-          Start-Process -FilePath $exe -ArgumentList ''
-          Start-Sleep -Seconds 5
-          $procs = Get-Process -Name "MyClaw.One" -ErrorAction SilentlyContinue
-          if (-not $procs) {
-            throw "MyClaw.One process did not launch"
-          }
-          Write-Host "Process running; PID(s): $($procs.Id -join ', ')"
-
-      - name: Wait for Gateway port 18789
-        shell: pwsh
-        run: |
-          # First-run on Windows frequently takes ~2 min: a handshake timeout
-          # after the initial Gateway process spawn forces a restart, and the
-          # second spawn is the one that actually binds. 420s covers the
-          # worst case we've observed on windows-latest.
-          $totalWaitSec = 420
-          $start = Get-Date
-          $deadline = $start.AddSeconds($totalWaitSec)
-          $found = $false
-          while ((Get-Date) -lt $deadline) {
-            $conn = Get-NetTCPConnection -LocalPort 18789 -State Listen -ErrorAction SilentlyContinue
-            if ($conn) {
-              $elapsed = [int]((Get-Date) - $start).TotalSeconds
-              Write-Host "Gateway listening on 18789 (PID $($conn[0].OwningProcess)) after ${elapsed}s"
-              $found = $true
-              break
-            }
-            Start-Sleep -Seconds 3
-          }
-          if (-not $found) {
-            throw "gateway port 18789 is not listening after ${totalWaitSec}s"
-          }
-
-      - name: Probe Gateway HTTP
-        shell: pwsh
-        run: |
-          try {
-            $r = Invoke-WebRequest -Uri 'http://127.0.0.1:18789/' -TimeoutSec 10 -UseBasicParsing
-            Write-Host "Gateway HTTP status: $($r.StatusCode)"
-          } catch {
-            # 404 / unauthorised are fine — we only care that something is serving
-            Write-Host "Gateway HTTP probe (non-2xx is OK for smoke): $_"
-          }
+          pnpm exec playwright test tests/e2e/post-install.spec.ts --reporter=list
 
       - name: Capture diagnostics
         if: always()

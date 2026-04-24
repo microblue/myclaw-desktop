@@ -40,6 +40,36 @@ async function allocatePort(): Promise<number> {
 
 async function launchMyClawElectron(homeDir: string, userDataDir: string): Promise<ElectronApplication> {
   const hostApiPort = await allocatePort();
+
+  // MYCLAW_INSTALLED_EXE = absolute path to a packaged MyClaw.One.exe from
+  // a real installer run.  Set by windows-install-smoke.yml to point at
+  // `C:\Program Files\MyClaw.One\MyClaw.One.exe` — lets the same spec file
+  // exercise the real packaged binary without a separate fixture.
+  //
+  // In installed-exe mode we intentionally don't override HOME / USERPROFILE
+  // so the test shares the runner's real ~/.myclaw/runtime/ with preceding
+  // smoke steps (no second first-launch npm install).  Runner is ephemeral;
+  // state leakage across the job is fine.
+  const installedExe = process.env.MYCLAW_INSTALLED_EXE;
+  if (installedExe) {
+    return await electron.launch({
+      executablePath: installedExe,
+      args: [],
+      env: {
+        ...process.env,
+        MYCLAW_E2E: '1',
+        MYCLAW_USER_DATA_DIR: userDataDir,
+        MYCLAW_PORT_MYCLAW_HOST_API: String(hostApiPort),
+        ...(process.env.OPENROUTER_TEST_API_KEY
+          ? { OPENROUTER_TEST_API_KEY: process.env.OPENROUTER_TEST_API_KEY }
+          : {}),
+      },
+      // First-launch splash + runtime npm install can take up to ~90s on
+      // Windows CI.  Subsequent launches are fast.  Conservative budget.
+      timeout: 180_000,
+    });
+  }
+
   const electronEnv = process.platform === 'linux'
     ? { ELECTRON_DISABLE_SANDBOX: '1' }
     : {};
@@ -63,6 +93,26 @@ async function launchMyClawElectron(homeDir: string, userDataDir: string): Promi
     },
     timeout: 90_000,
   });
+}
+
+/**
+ * Return the first window that is NOT the runtime-progress splash.
+ * On a fresh installed-exe launch the splash opens first while the
+ * runtime npm install runs; the main app window follows once that
+ * completes (30-90s typical).  This helper hides that transition from
+ * the test body.
+ */
+async function getMainAppWindow(app: ElectronApplication): Promise<Page> {
+  let candidate = await app.firstWindow({ timeout: 300_000 });
+  let iterations = 0;
+  while (iterations++ < 5) {
+    const url = candidate.url();
+    if (!url.includes('runtime-progress')) return candidate;
+    // The splash is showing.  Wait for the next window event — which is
+    // the main app window opening after runtime init completes.
+    candidate = await app.waitForEvent('window', { timeout: 300_000 });
+  }
+  return candidate;
 }
 
 export const test = base.extend<ElectronFixtures>({
@@ -108,7 +158,7 @@ export const test = base.extend<ElectronFixtures>({
   },
 
   page: async ({ electronApp }, providePage) => {
-    const page = await electronApp.firstWindow();
+    const page = await getMainAppWindow(electronApp);
     await page.waitForLoadState('domcontentloaded');
     await providePage(page);
   },
