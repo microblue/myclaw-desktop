@@ -517,9 +517,22 @@ jobs:
           if (Test-Path $outLog) { Remove-Item $outLog -Force }
           if (Test-Path $errLog) { Remove-Item $errLog -Force }
 
-          $cmdArg = '"' + $exe + '" --enable-logging=stderr --v=1 --no-sandbox > "' + $outLog + '" 2> "' + $errLog + '"'
-          Write-Host "Launching via cmd: $cmdArg"
-          Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $cmdArg
+          # Prior attempt passed the entire shell command as a single
+          # Start-Process argument — which wraps the string in quotes
+          # such that cmd.exe parses `>` as a literal argv element
+          # instead of a redirect, so no log files were produced.
+          # Workaround: write a .bat script containing the redirect,
+          # then invoke that script.  cmd parses the redirect from the
+          # script file exactly as shell-intended.
+          $batFile = Join-Path $env:USERPROFILE "launch-myclaw.bat"
+          $batLine = '"' + $exe + '" --enable-logging=stderr --v=1 --no-sandbox > "' + $outLog + '" 2> "' + $errLog + '"'
+          $batContent = "@echo off`r`n" + $batLine + "`r`n"
+          Set-Content -Path $batFile -Value $batContent -Encoding ascii -NoNewline
+          Write-Host "Launch script: $batFile"
+          Write-Host "--- bat contents ---"
+          Get-Content $batFile
+          Write-Host "--------------------"
+          Start-Process -FilePath $batFile
           Start-Sleep -Seconds 5
 
           $myclaw = Get-Process -Name "MyClaw.One" -ErrorAction SilentlyContinue
