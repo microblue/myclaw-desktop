@@ -501,21 +501,25 @@ jobs:
         run: |
           $exe = "${{ steps.install-path.outputs.exe }}"
 
-          # Capture Electron/Chromium logs via --enable-logging.  With
-          # value 'file', Chromium writes everything (including JS console
-          # output from the main process and uncaught exceptions during
-          # pre-ready bootstrap) to a specified log file.  Prior runs
-          # showed MyClaw.One alive but with only 0.38s CPU over 900s —
-          # meaning the main bundle loaded but something blocks before
-          # app.whenReady() fires.  electron-log won't help because our
-          # logger.init() runs inside initialize() which is gated on
-          # whenReady.  Chromium's own logger has no such gate.
-          $chromiumLog = Join-Path $env:USERPROFILE "myclaw-chromium.log"
-          if (Test-Path $chromiumLog) { Remove-Item $chromiumLog -Force }
+          # Launch MyClaw via cmd.exe with stderr redirected to a file.
+          # Prior --enable-logging=file attempt produced an empty log
+          # (header printed, file created, zero bytes of content) —
+          # suggesting Chromium either interpreted =file as "default
+          # location" or bailed before writing.  Switch tack: redirect
+          # the process's stdio directly via cmd /c > out 2>&1.  This
+          # captures anything written to stdout/stderr by the Electron
+          # binary from the moment it starts, including pre-Chromium
+          # init errors.  --no-sandbox removes a layer that's sometimes
+          # problematic on CI runners.  --enable-logging=stderr (no
+          # =file) redirects Chromium logs through stderr.
+          $outLog = Join-Path $env:USERPROFILE "myclaw-out.log"
+          $errLog = Join-Path $env:USERPROFILE "myclaw-err.log"
+          if (Test-Path $outLog) { Remove-Item $outLog -Force }
+          if (Test-Path $errLog) { Remove-Item $errLog -Force }
 
-          Write-Host "Launching: $exe --enable-logging=file --log-file=$chromiumLog --v=1"
-          Start-Process -FilePath $exe `
-                        -ArgumentList "--enable-logging=file","--log-file=$chromiumLog","--v=1"
+          $cmdArg = '"' + $exe + '" --enable-logging=stderr --v=1 --no-sandbox > "' + $outLog + '" 2> "' + $errLog + '"'
+          Write-Host "Launching via cmd: $cmdArg"
+          Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $cmdArg
           Start-Sleep -Seconds 5
 
           $myclaw = Get-Process -Name "MyClaw.One" -ErrorAction SilentlyContinue
@@ -613,16 +617,18 @@ jobs:
             }
           }
 
-          # Chromium/Electron log — captures pre-ready errors that
-          # electron-log can't see (since our logger.init() runs inside
-          # initialize() which is gated on app.whenReady).
-          if (Test-Path $chromiumLog) {
+          # stdout + stderr captured via cmd /c > out 2> err
+          foreach ($label in @('stdout', 'stderr')) {
+            $path = if ($label -eq 'stdout') { $outLog } else { $errLog }
             Write-Host ""
-            Write-Host "=== Chromium log (full) at $chromiumLog ==="
-            Get-Content $chromiumLog
-          } else {
-            Write-Host ""
-            Write-Host "(Chromium log not produced at $chromiumLog — either bootstrapping never reached logger init or the flag was ignored)"
+            Write-Host "=== MyClaw $label at $path ==="
+            if (Test-Path $path) {
+              $size = (Get-Item $path).Length
+              Write-Host "  size: $size bytes"
+              Get-Content $path
+            } else {
+              Write-Host "  (file not created)"
+            }
           }
 
           if (-not $found) {
