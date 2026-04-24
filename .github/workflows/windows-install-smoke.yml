@@ -387,6 +387,18 @@ jobs:
           # needed now — we actually have a config.
           $env:OPENCLAW_STATE_DIR = $stateDir
 
+          # Force any swallowed error to the surface.  Previous runs
+          # showed gateway silently exiting after 'auth token saved'
+          # with no crash banner, no 'canvas host mounted', no
+          # 'listening'.  --unhandled-rejections=strict makes Node
+          # crash-with-banner on any unhandled Promise rejection
+          # (instead of the silent exit behaviour that swallows it
+          # when stdout is piped).  --trace-uncaught prints the
+          # originating stack for uncaught exceptions.  --trace-warnings
+          # annotates DeprecationWarnings with their emit site — some
+          # openclaw internals may be tripping one.
+          $env:NODE_OPTIONS = '--unhandled-rejections=strict --trace-uncaught --trace-warnings'
+
           $stdoutLog = Join-Path $runtime "gateway-stdout.log"
           $stderrLog = Join-Path $runtime "gateway-stderr.log"
 
