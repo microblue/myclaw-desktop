@@ -239,7 +239,104 @@ not support isolation env vars is a non-starter — upstream PR first.
   deleted — needs confirmation from install-smoke that openclaw finds
   plugins via `node_modules` resolution without the copy.
 
-## 11. Decisions checklist for new code
+## 11. Coupling principle: MyClaw is a dashboard, not a fork
+
+Directive from product lead (2026-04-23): *"MyClaw 的定位就成了操纵
+配置管理 openclaw，而不是在 openclaw 的代码库上做一个 openclaw
+增强版"*.
+
+MyClaw interacts with the backend through **exactly three contract
+surfaces**.  Anything outside these is a coupling violation:
+
+1. **CLI command surface** — `openclaw gateway run`, `openclaw plugins
+   install <name>`, `openclaw doctor`, etc.  If we need the runtime
+   to do something, we invoke its CLI.
+2. **HTTP / RPC API** — gateway endpoints (`/v1/*`) for chat, plugin
+   metadata, channel status, runtime health.
+3. **`openclaw.json` config schema** — the openclaw-documented JSON
+   format at the openclaw state dir root.  MyClaw reads it, writes it,
+   and sanitises it.  This is the "dashboard" side of the job.
+
+Everything else is the backend's internal state that MyClaw must not
+touch.
+
+### Banned practices (block in review)
+
+- ❌ Reading backend `dist/` / `node_modules/` internal files to
+  extract metadata.  Ask the backend API for that metadata.
+- ❌ Hand-editing / patching backend-installed files to "fix" bugs in
+  the backend's own output.  File an issue upstream and skip the
+  patch — MyClaw is not the place to accumulate vendor-specific
+  workarounds for vendor bugs.
+- ❌ Hardcoding the backend's plugin IDs, npm package names, manifest
+  schemas, or channel → plugin relationships.  Derive these at runtime
+  from the backend's API or config.
+- ❌ Duplicating `openclaw plugins install X` by doing our own
+  `cpSync` / `npm install` / file layout logic.  If the backend has a
+  CLI command for it, shell out; don't reinvent it.
+- ❌ Writing into the backend's extension or plugin directories
+  (see §3 for the broader install-boundary rule).
+- ❌ Maintaining a compile-time list of "which plugins exist" in MyClaw
+  source.  The backend knows; ask it.
+
+### Allowed (dashboard operations)
+
+- ✅ Reading / writing `openclaw.json` to change channels, providers,
+  proxy, mdns, session settings, gateway port, gateway token, etc.
+- ✅ Managing `~/.openclaw/credentials/` (user OAuth tokens).
+- ✅ Pre-depositing user-facing skills into `~/.openclaw/skills/` as a
+  dashboard convenience feature.
+- ✅ Spawning backend CLI commands and parsing their output.
+- ✅ Calling the backend's HTTP API.
+- ✅ Cleaning up our own historical pollution of the backend's
+  directories (e.g. `cleanupStaleBuiltInExtensions`).  Negative
+  cleanup does not violate the boundary.
+
+### Why this matters
+
+OpenClaw ships weekly (CalVer `2026.4.x`).  If MyClaw's behaviour
+depends on openclaw's internal file layout or bug-specific workarounds,
+every upstream release risks breaking MyClaw silently.  By reducing
+the coupling to three documented contract surfaces we decouple the
+release cadences:
+
+- MyClaw can go months between releases
+- Users can upgrade openclaw independently (see §12)
+- A broken openclaw release is a "warn user, pin to previous" problem,
+  not a "fork openclaw and patch it" problem.
+
+## 12. Version-range strategy
+
+MyClaw declares **two** openclaw version facts in
+`package.json → available_backends.openclaw`:
+
+- `version` — what the runtime-install step fetches on a fresh install.
+  Must be exact (openclaw is CalVer, no semver).
+- `tested_compatible` — `{ min, max }` range MyClaw has been exercised
+  against.  Not used by the installer; used by the startup
+  compatibility check.
+
+On every launch MyClaw reads the actually-installed openclaw version
+and compares:
+
+- **Inside range** → silent.
+- **Outside range** → non-blocking warning dialog: "This version has
+  not been tested with MyClaw X.Y.  You may encounter issues."  User
+  can dismiss or choose to pin to a tested version.
+
+Users can upgrade openclaw independently of MyClaw releases via a
+"Check for OpenClaw update" action (Help menu or Settings → Runtime).
+That action spawns `npm install openclaw@latest --prefix ~/.myclaw/runtime`
+and restarts the gateway.  If the new version is outside
+`tested_compatible.max`, the user is warned.
+
+Consequence: MyClaw's release cadence is decoupled from openclaw's.
+A new MyClaw release bumps `tested_compatible.max` after we have
+actually tested against that range.  Users are never *forced* to wait
+for MyClaw to update in order to use a newer openclaw — they opt in,
+with a clear warning.
+
+## 13. Decisions checklist for new code
 
 Before adding code that touches openclaw, ask:
 

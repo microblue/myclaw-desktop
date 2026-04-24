@@ -12,6 +12,7 @@ MyClaw Desktop — MyClaw Desktop — OpenClaw 桌面客户端
 ## 规则
 - 大任务 spawn 子 agent
 - 遵循 PEP 8 命名规范（snake_case）
+- **MyClaw 是 openclaw dashboard，不是 fork** — 只通过 3 个契约面（CLI / HTTP API / openclaw.json）操纵 openclaw。禁读 openclaw 内部文件、禁 patch 上游 bug、禁 hardcode plugin 清单。详见 `ARCHITECTURE.md §11`
 
 ## ⚠️ Context 管理规则
 - 超过 5 分钟或涉及多文件修改的任务，spawn 子 agent
