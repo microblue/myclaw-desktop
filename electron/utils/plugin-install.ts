@@ -1,26 +1,31 @@
 /**
- * Shared OpenClaw Plugin Install Utilities
+ * OpenClaw plugin install — dashboard mode.
  *
- * Provides version-aware install/upgrade logic for preinstalled OpenClaw
- * channel plugins (WeCom, QQBot, Feishu, WeChat).  Used both at app startup
- * (to auto-upgrade stale plugins) and when a user configures a channel.
+ * Per ARCHITECTURE.md §11 (MyClaw is a dashboard, not a fork) MyClaw
+ * does NOT place plugin files itself.  When a plugin install is
+ * required (e.g. a user clicks "Configure WeCom" in the UI), we shell
+ * out to openclaw's own CLI — `openclaw plugins install <npm-spec>` —
+ * and let openclaw own everything downstream: file placement, manifest
+ * handling, its own node_modules tree, everything.
  *
- * Sources (per "官方装在哪里你就去哪里读" directive):
- *   - Packaged: ~/.myclaw/runtime/node_modules/<npm-pkg>/, populated by
- *     ensure_myclaw_runtime_installed() from the preinstalled_plugins
- *     map in package.json at first launch.
- *   - Dev: workspace node_modules (pnpm-aware fallback at the bottom of
- *     ensurePluginInstalled handles the virtual store).
+ * This file used to contain ~550 lines of:
+ *   - pnpm virtual-store BFS to replicate npm resolution
+ *   - copyPluginFromNodeModules / buildCandidateSources
+ *   - MANIFEST_ID_FIXES + compiled-JS patching to work around a known
+ *     wecom-openclaw-plugin upstream bug
+ *   - ensurePluginInstalled with retry + cross-platform copy paths
+ *   - ensureAllPreinstalledPluginsInstalled bulk startup installer
  *
- * Target remains ~/.openclaw/extensions/<plugin-dir>/ so openclaw's
- * existing extension loader finds them without needing config changes.
+ * All of that was explicit fork behaviour and got deleted.  What
+ * remains: the generic cp helpers (used by skill-config.ts too) and
+ * four thin façades over openclaw's own plugins-install CLI.
  */
-import { app } from 'electron';
-import path from 'node:path';
-import { existsSync, cpSync, copyFileSync, statSync, mkdirSync, rmSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { cpSync, copyFileSync, statSync, mkdirSync, readdirSync } from 'node:fs';
 import { readdir, stat, copyFile, mkdir } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import path from 'node:path';
 import { join } from 'node:path';
+import { getOpenClawEntryPath } from './paths';
 import { logger } from './logger';
 
 function normalizeFsPathForWindows(filePath: string): string {
@@ -44,15 +49,15 @@ function fsPath(filePath: string): string {
  * Unicode-safe recursive directory copy.
  *
  * Node.js `cpSync` / `cp` crash on Windows when paths contain non-ASCII
- * characters such as Chinese (nodejs/node#54476).  On Windows we fall back
- * to a manual recursive walk using `copyFileSync` which is unaffected.
+ * characters such as Chinese (nodejs/node#54476).  On Windows we fall
+ * back to a manual recursive walk using `copyFileSync` which is
+ * unaffected.  Kept here because skill-config.ts reuses it.
  */
 export function cpSyncSafe(src: string, dest: string): void {
   if (process.platform !== 'win32') {
     cpSync(fsPath(src), fsPath(dest), { recursive: true, dereference: true });
     return;
   }
-  // Windows: manual recursive copy with per-file copyFileSync
   _copyDirSyncRecursive(fsPath(src), fsPath(dest));
 }
 
@@ -62,7 +67,6 @@ function _copyDirSyncRecursive(src: string, dest: string): void {
   for (const entry of entries) {
     const srcChild = join(src, entry.name);
     const destChild = join(dest, entry.name);
-    // Dereference symlinks: use statSync (follows links) instead of lstatSync
     const info = statSync(srcChild);
     if (info.isDirectory()) {
       _copyDirSyncRecursive(srcChild, destChild);
@@ -72,16 +76,13 @@ function _copyDirSyncRecursive(src: string, dest: string): void {
   }
 }
 
-/**
- * Async variant of `cpSyncSafe` for use with fs/promises.
- */
+/** Async variant of `cpSyncSafe`. */
 export async function cpAsyncSafe(src: string, dest: string): Promise<void> {
   if (process.platform !== 'win32') {
     const { cp } = await import('node:fs/promises');
     await cp(fsPath(src), fsPath(dest), { recursive: true, dereference: true });
     return;
   }
-  // Windows: manual recursive copy with per-file copyFile
   await _copyDirAsyncRecursive(fsPath(src), fsPath(dest));
 }
 
@@ -100,331 +101,82 @@ async function _copyDirAsyncRecursive(src: string, dest: string): Promise<void> 
   }
 }
 
-function asErrnoException(error: unknown): NodeJS.ErrnoException | null {
-  if (error && typeof error === 'object') {
-    return error as NodeJS.ErrnoException;
-  }
-  return null;
-}
+// ── Plugin install via openclaw CLI delegation ──────────────────────────────
 
-function toErrorDiagnostic(error: unknown): { code?: string; name?: string; message: string } {
-  const errno = asErrnoException(error);
-  if (!errno) {
-    return { message: String(error) };
-  }
-
-  return {
-    code: typeof errno.code === 'string' ? errno.code : undefined,
-    name: errno.name,
-    message: errno.message || String(error),
-  };
-}
-
-// NOTE: Prior versions of this file contained MANIFEST_ID_FIXES,
-// fixupPluginManifest, and patchPluginEntryIds — MyClaw-side code that
-// rewrote openclaw.plugin.json manifests and compiled-JS `id:` fields
-// of plugins installed by openclaw itself, to work around a known
-// mismatch in the `wecom-openclaw-plugin` package (manifest id vs.
-// exported id).
-//
-// Deleted in accordance with ARCHITECTURE.md §11 — MyClaw is a
-// dashboard, not a fork.  Patching upstream plugin output is explicit
-// fork behaviour: the fix belongs upstream, not here.  Any resurgence
-// of the wecom ID mismatch should be an issue filed against the
-// `@wecom/wecom-openclaw-plugin` repo.
-
-// ── Plugin npm name mapping ──────────────────────────────────────────────────
-
-const PLUGIN_NPM_NAMES: Record<string, string> = {
-  wecom: '@wecom/wecom-openclaw-plugin',
-  'feishu-openclaw-plugin': '@larksuite/openclaw-lark',
-  qqbot: '@tencent-connect/openclaw-qqbot',
-  'openclaw-weixin': '@tencent-weixin/openclaw-weixin',
-};
-
-// ── Version helper ───────────────────────────────────────────────────────────
-
-function readPluginVersion(pkgJsonPath: string): string | null {
-  try {
-    const raw = readFileSync(fsPath(pkgJsonPath), 'utf-8');
-    const parsed = JSON.parse(raw) as { version?: string };
-    return parsed.version ?? null;
-  } catch {
-    return null;
-  }
-}
-
-// ── pnpm-aware node_modules copy helpers ─────────────────────────────────────
-
-/** Walk up from a path until we find a parent named node_modules. */
-function findParentNodeModules(startPath: string): string | null {
-  let dir = startPath;
-  while (dir !== path.dirname(dir)) {
-    if (path.basename(dir) === 'node_modules') return dir;
-    dir = path.dirname(dir);
-  }
-  return null;
-}
-
-/** List packages inside a node_modules dir (handles @scoped packages). */
-function listPackagesInDir(nodeModulesDir: string): Array<{ name: string; fullPath: string }> {
-  const result: Array<{ name: string; fullPath: string }> = [];
-  if (!existsSync(fsPath(nodeModulesDir))) return result;
-  const SKIP = new Set(['.bin', '.package-lock.json', '.modules.yaml', '.pnpm']);
-  for (const entry of readdirSync(fsPath(nodeModulesDir), { withFileTypes: true })) {
-    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-    if (SKIP.has(entry.name)) continue;
-    const entryPath = join(nodeModulesDir, entry.name);
-    if (entry.name.startsWith('@')) {
-      try {
-        for (const sub of readdirSync(fsPath(entryPath))) {
-          result.push({ name: `${entry.name}/${sub}`, fullPath: join(entryPath, sub) });
-        }
-      } catch { /* ignore */ }
-    } else {
-      result.push({ name: entry.name, fullPath: entryPath });
-    }
-  }
-  return result;
+export interface PluginInstallResult {
+  installed: boolean;
+  warning?: string;
 }
 
 /**
- * Copy a plugin from a pnpm node_modules location, including its
- * transitive runtime dependencies — used by the dev-mode fallback when
- * the plugin source lives in the workspace pnpm virtual store rather
- * than in the flat runtime node_modules.
+ * Spawn `openclaw plugins install <npm-spec>` and resolve with the
+ * exit result.  We run openclaw via Electron-as-Node (the same
+ * process.execPath the Gateway uses) so the CLI executes in the same
+ * runtime environment MyClaw already talks to.
+ *
+ * openclaw owns the install outcome: where the plugin files land, any
+ * manifest normalisation, dependency resolution.  MyClaw just logs the
+ * stdout/stderr for diagnostics.
  */
-export function copyPluginFromNodeModules(npmPkgPath: string, targetDir: string, npmName: string): void {
-  let realPath: string;
-  try {
-    realPath = realpathSync(fsPath(npmPkgPath));
-  } catch {
-    throw new Error(`Cannot resolve real path for ${npmPkgPath}`);
-  }
-
-  // 1. Copy plugin package itself
-  rmSync(fsPath(targetDir), { recursive: true, force: true });
-  mkdirSync(fsPath(targetDir), { recursive: true });
-  cpSyncSafe(realPath, targetDir);
-
-  // 2. Collect transitive deps from pnpm virtual store
-  const rootVirtualNM = findParentNodeModules(realPath);
-  if (!rootVirtualNM) {
-    logger.warn(`[plugin] Cannot find virtual store node_modules for ${npmName}, plugin may lack deps`);
-    return;
-  }
-
-  // Read peer deps to skip (they're provided by the host gateway)
-  const SKIP_PACKAGES = new Set(['typescript', '@playwright/test']);
-  try {
-    const pluginPkg = JSON.parse(readFileSync(fsPath(join(targetDir, 'package.json')), 'utf-8'));
-    for (const peer of Object.keys(pluginPkg.peerDependencies || {})) {
-      SKIP_PACKAGES.add(peer);
-    }
-  } catch { /* ignore */ }
-
-  const collected = new Map<string, string>(); // realPath → packageName
-  const queue: Array<{ nodeModulesDir: string; skipPkg: string }> = [
-    { nodeModulesDir: rootVirtualNM, skipPkg: npmName },
-  ];
-
-  while (queue.length > 0) {
-    const { nodeModulesDir, skipPkg } = queue.shift()!;
-    for (const { name, fullPath } of listPackagesInDir(nodeModulesDir)) {
-      if (name === skipPkg) continue;
-      if (SKIP_PACKAGES.has(name) || name.startsWith('@types/')) continue;
-      let depRealPath: string;
-      try {
-        depRealPath = realpathSync(fsPath(fullPath));
-      } catch { continue; }
-      if (collected.has(depRealPath)) continue;
-      collected.set(depRealPath, name);
-      const depVirtualNM = findParentNodeModules(depRealPath);
-      if (depVirtualNM && depVirtualNM !== nodeModulesDir) {
-        queue.push({ nodeModulesDir: depVirtualNM, skipPkg: name });
-      }
-    }
-  }
-
-  // 3. Copy flattened deps into targetDir/node_modules/
-  const outputNM = join(targetDir, 'node_modules');
-  mkdirSync(fsPath(outputNM), { recursive: true });
-  const copiedNames = new Set<string>();
-  for (const [depRealPath, pkgName] of collected) {
-    if (copiedNames.has(pkgName)) continue;
-    copiedNames.add(pkgName);
-    const dest = join(outputNM, pkgName);
-    try {
-      mkdirSync(fsPath(path.dirname(dest)), { recursive: true });
-      cpSyncSafe(depRealPath, dest);
-    } catch { /* skip individual dep failures */ }
-  }
-
-  logger.info(`[plugin] Copied ${copiedNames.size} deps for ${npmName}`);
-}
-
-// ── Core install / upgrade logic ─────────────────────────────────────────────
-
-export function ensurePluginInstalled(
-  pluginDirName: string,
-  candidateSources: string[],
-  pluginLabel: string,
-): { installed: boolean; warning?: string } {
-  const targetDir = join(homedir(), '.openclaw', 'extensions', pluginDirName);
-  const targetManifest = join(targetDir, 'openclaw.plugin.json');
-  const targetPkgJson = join(targetDir, 'package.json');
-
-  const sourceDir = candidateSources.find((dir) => existsSync(fsPath(join(dir, 'openclaw.plugin.json'))));
-
-  // If already installed, check whether an upgrade is available
-  if (existsSync(fsPath(targetManifest))) {
-    if (!sourceDir) return { installed: true }; // no preinstalled source to compare, keep existing
-    const installedVersion = readPluginVersion(targetPkgJson);
-    const sourceVersion = readPluginVersion(join(sourceDir, 'package.json'));
-    if (!sourceVersion || !installedVersion || sourceVersion === installedVersion) {
-      return { installed: true }; // same version or unable to compare
-    }
-    // Version differs — fall through to overwrite install
-    logger.info(
-      `[plugin] Upgrading ${pluginLabel} plugin: ${installedVersion} → ${sourceVersion}`,
-    );
-  }
-
-  // Fresh install or upgrade — try preinstalled sources first
-  if (sourceDir) {
-    const extensionsRoot = join(homedir(), '.openclaw', 'extensions');
-    const attempts: Array<{ attempt: number; code?: string; name?: string; message: string }> = [];
-    const maxAttempts = process.platform === 'win32' ? 2 : 1;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        mkdirSync(fsPath(extensionsRoot), { recursive: true });
-        rmSync(fsPath(targetDir), { recursive: true, force: true });
-        cpSyncSafe(sourceDir, targetDir);
-        if (!existsSync(fsPath(join(targetDir, 'openclaw.plugin.json')))) {
-          return { installed: false, warning: `Failed to install ${pluginLabel} plugin mirror (manifest missing).` };
-        }
-        logger.info(`Installed ${pluginLabel} plugin from preinstalled source: ${sourceDir}`);
-        return { installed: true };
-      } catch (error) {
-        const diagnostic = toErrorDiagnostic(error);
-        attempts.push({ attempt, ...diagnostic });
-        if (attempt < maxAttempts) {
-          try {
-            rmSync(fsPath(targetDir), { recursive: true, force: true });
-          } catch {
-            // Ignore cleanup failures before retry.
-          }
-        }
-      }
-    }
-
-    logger.warn(
-      `[plugin] Preinstalled source install failed for ${pluginLabel}`,
+function invokeOpenClawPluginsInstall(
+  npmSpec: string,
+  label: string,
+): Promise<PluginInstallResult> {
+  const entry = getOpenClawEntryPath();
+  return new Promise((resolve) => {
+    let stderr = '';
+    const child = spawn(
+      process.execPath,
+      [entry, 'plugins', 'install', npmSpec],
       {
-        pluginDirName,
-        pluginLabel,
-        sourceDir,
-        targetDir,
-        platform: process.platform,
-        attempts,
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+        stdio: ['ignore', 'pipe', 'pipe'],
       },
     );
-
-    return { installed: false, warning: `Failed to install preinstalled ${pluginLabel} plugin` };
-  }
-
-  // Dev mode fallback: copy from node_modules with pnpm-aware dep resolution
-  if (!app.isPackaged) {
-    const npmName = PLUGIN_NPM_NAMES[pluginDirName];
-    if (npmName) {
-      const npmPkgPath = join(process.cwd(), 'node_modules', ...npmName.split('/'));
-      if (existsSync(fsPath(join(npmPkgPath, 'openclaw.plugin.json')))) {
-        const installedVersion = existsSync(fsPath(targetPkgJson)) ? readPluginVersion(targetPkgJson) : null;
-        const sourceVersion = readPluginVersion(join(npmPkgPath, 'package.json'));
-        if (sourceVersion && (!installedVersion || sourceVersion !== installedVersion)) {
-          logger.info(
-            `[plugin] ${installedVersion ? 'Upgrading' : 'Installing'} ${pluginLabel} plugin` +
-            `${installedVersion ? `: ${installedVersion} → ${sourceVersion}` : `: ${sourceVersion}`} (dev/node_modules)`,
-          );
-          try {
-            mkdirSync(fsPath(join(homedir(), '.openclaw', 'extensions')), { recursive: true });
-            copyPluginFromNodeModules(npmPkgPath, targetDir, npmName);
-            if (existsSync(fsPath(join(targetDir, 'openclaw.plugin.json')))) {
-              return { installed: true };
-            }
-          } catch (err) {
-            logger.warn(
-              `[plugin] Failed to install ${pluginLabel} plugin from node_modules`,
-              {
-                pluginDirName,
-                pluginLabel,
-                npmName,
-                npmPkgPath,
-                targetDir,
-                platform: process.platform,
-                ...toErrorDiagnostic(err),
-              },
-            );
-          }
-        } else if (existsSync(fsPath(targetManifest))) {
-          return { installed: true }; // same version, already installed
-        }
+    child.stdout?.on('data', (chunk: Buffer) => {
+      for (const line of chunk.toString().split(/\r?\n/)) {
+        if (line.trim()) logger.info(`[plugin:${label}] ${line}`);
       }
-    }
-  }
-
-  return {
-    installed: false,
-    warning: `Preinstalled ${pluginLabel} plugin source not found. Checked: ${candidateSources.join(' | ')}`,
-  };
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      const text = chunk.toString();
+      stderr += text;
+      for (const line of text.split(/\r?\n/)) {
+        if (line.trim()) logger.warn(`[plugin:${label}] ${line}`);
+      }
+    });
+    child.on('error', (err) => {
+      resolve({
+        installed: false,
+        warning: `Failed to spawn \`openclaw plugins install\`: ${err.message}`,
+      });
+    });
+    child.on('exit', (code) => {
+      if (code === 0) {
+        resolve({ installed: true });
+        return;
+      }
+      const tail = stderr.trim().slice(-400);
+      resolve({
+        installed: false,
+        warning: `\`openclaw plugins install ${npmSpec}\` exited with code ${code ?? '?'}${tail ? `. ${tail}` : ''}`,
+      });
+    });
+  });
 }
 
-// ── Candidate source path builder ────────────────────────────────────────────
-
-export function buildCandidateSources(pluginDirName: string): string[] {
-  const npmName = PLUGIN_NPM_NAMES[pluginDirName];
-  if (app.isPackaged) {
-    // Packaged: MyClaw runtime is npm-installed under ~/.myclaw/runtime/.
-    // Plugins listed in package.json's preinstalled_plugins landed as
-    // direct deps at node_modules/<npm-pkg>/ alongside openclaw itself.
-    if (!npmName) return [];
-    return [join(homedir(), '.myclaw', 'runtime', 'node_modules', ...npmName.split('/'))];
-  }
-  // Dev: if someone has an ad-hoc build/openclaw-plugins/ around (old
-  // workflows), try those first; otherwise the pnpm-aware fallback
-  // below (copyPluginFromNodeModules) walks the workspace virtual store.
-  return [
-    join(app.getAppPath(), 'build', 'openclaw-plugins', pluginDirName),
-    join(process.cwd(), 'build', 'openclaw-plugins', pluginDirName),
-    join(__dirname, '../../build/openclaw-plugins', pluginDirName),
-  ];
+export function ensureWeComPluginInstalled(): Promise<PluginInstallResult> {
+  return invokeOpenClawPluginsInstall('@wecom/wecom-openclaw-plugin', 'WeCom');
 }
 
-// ── Per-channel plugin helpers ───────────────────────────────────────────────
-
-export function ensureWeComPluginInstalled(): { installed: boolean; warning?: string } {
-  return ensurePluginInstalled('wecom', buildCandidateSources('wecom'), 'WeCom');
+export function ensureFeishuPluginInstalled(): Promise<PluginInstallResult> {
+  return invokeOpenClawPluginsInstall('@larksuite/openclaw-lark', 'Feishu');
 }
 
-export function ensureFeishuPluginInstalled(): { installed: boolean; warning?: string } {
-  return ensurePluginInstalled(
-    'feishu-openclaw-plugin',
-    buildCandidateSources('feishu-openclaw-plugin'),
-    'Feishu',
-  );
+export function ensureQQBotPluginInstalled(): Promise<PluginInstallResult> {
+  return invokeOpenClawPluginsInstall('@tencent-connect/openclaw-qqbot', 'QQ Bot');
 }
 
-export function ensureQQBotPluginInstalled(): { installed: boolean; warning?: string } {
-  return ensurePluginInstalled('qqbot', buildCandidateSources('qqbot'), 'QQ Bot');
+export function ensureWeChatPluginInstalled(): Promise<PluginInstallResult> {
+  return invokeOpenClawPluginsInstall('@tencent-weixin/openclaw-weixin', 'WeChat');
 }
-
-export function ensureWeChatPluginInstalled(): { installed: boolean; warning?: string } {
-  return ensurePluginInstalled('openclaw-weixin', buildCandidateSources('openclaw-weixin'), 'WeChat');
-}
-
-// NOTE: Prior versions also exported ensureAllPreinstalledPluginsInstalled
-// (a bulk startup installer that copied every channel plugin into
-// ~/.openclaw/extensions/).  Removed in d58ded2 after the MyClaw ↔
-// openclaw boundary was tightened — the startup path no longer writes
-// anywhere under ~/.openclaw/.
