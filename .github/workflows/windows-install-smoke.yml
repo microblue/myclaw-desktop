@@ -257,8 +257,35 @@ jobs:
         shell: pwsh
         run: |
           $runtime = "${{ steps.layer3a.outputs.runtime }}"
-          $entry = Join-Path $runtime "node_modules\openclaw\openclaw.mjs"
-          if (-not (Test-Path $entry)) { throw "LAYER 4a FAIL: $entry not found" }
+          $openclawDir = Join-Path $runtime "node_modules\openclaw"
+          $entry = Join-Path $openclawDir "openclaw.mjs"
+
+          Write-Host "=== Contents of $openclawDir ==="
+          if (Test-Path $openclawDir) {
+            Get-ChildItem $openclawDir -Force -ErrorAction SilentlyContinue |
+              Format-Table Name, Length, LastWriteTime
+          } else {
+            Write-Host "(directory missing entirely)"
+            Write-Host ""
+            Write-Host "=== Contents of $runtime\node_modules (first 40) ==="
+            Get-ChildItem (Join-Path $runtime "node_modules") -Force -ErrorAction SilentlyContinue |
+              Select-Object -First 40 | Format-Table Name, Length
+          }
+
+          if (-not (Test-Path $entry)) {
+            Write-Host ""
+            Write-Host "=== package.json of openclaw (if present) ==="
+            $pkgPath = Join-Path $openclawDir "package.json"
+            if (Test-Path $pkgPath) {
+              Write-Host "bin field:"
+              (Get-Content $pkgPath -Raw | ConvertFrom-Json).bin | Format-List
+              Write-Host "main field:"
+              (Get-Content $pkgPath -Raw | ConvertFrom-Json).main
+              Write-Host "files field (first 15):"
+              (Get-Content $pkgPath -Raw | ConvertFrom-Json).files | Select-Object -First 15
+            }
+            throw "LAYER 4a FAIL: $entry not found"
+          }
           "entry=$entry" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "LAYER 4a OK: $entry"
 
