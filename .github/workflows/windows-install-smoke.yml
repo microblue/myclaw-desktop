@@ -232,6 +232,74 @@ jobs:
           "runtime=$prefix" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "openclaw_version=$installedVer" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
+      # ── Layer 3.5: pre-warm bundled plugin runtime deps ─────────────────────
+      # Openclaw's startup plugins (acpx/browser/device-pair/phone-control/
+      # talk-voice) each declare their own `dependencies` in
+      # `dist/extensions/<plugin>/package.json`.  At gateway boot,
+      # `ensureBundledPluginRuntimeDeps` (bundled-runtime-deps-*.js:495)
+      # calls `spawnSync('npm install ...')` synchronously for any plugin
+      # whose node_modules are missing.  On Linux that completes in ~2-3s
+      # total.  On Windows CI it hangs silently, kills gateway boot in the
+      # dark window between "auth token saved" and "canvas host mounted",
+      # with no error surfaced because the install error goes through
+      # pushPluginLoadError + stdio:'pipe' captures output in memory.
+      #
+      # We pre-install those startup-plugin deps here so the gateway sees
+      # an already-populated tree and skips spawnSync entirely.  Only the
+      # 5 always-loaded startup plugins are warmed; rarer plugins install
+      # lazily the first time they're enabled.
+
+      - name: Layer 3.5 — pre-warm bundled plugin runtime deps
+        shell: pwsh
+        run: |
+          $node    = "${{ steps.layer2a.outputs.node }}"
+          $npm     = "${{ steps.layer2c.outputs.npm }}"
+          $runtime = "${{ steps.layer3.outputs.runtime }}"
+
+          # Exactly the plugins Linux's first boot logged loading when
+          # given an empty config + scratch state dir:
+          #   [gateway] ready (5 plugins: acpx, browser, device-pair,
+          #   phone-control, talk-voice; 3.1s)
+          $startupPlugins = @('acpx', 'browser', 'device-pair', 'phone-control', 'talk-voice')
+
+          foreach ($plugin in $startupPlugins) {
+            $pluginDir = Join-Path $runtime "node_modules\openclaw\dist\extensions\$plugin"
+            $pkgPath   = Join-Path $pluginDir "package.json"
+            if (-not (Test-Path $pkgPath)) {
+              Write-Host "skip $plugin — package.json missing (plugin may have been renamed in this openclaw version)"
+              continue
+            }
+
+            $pkg = Get-Content $pkgPath -Raw | ConvertFrom-Json
+            $deps = @()
+            if ($pkg.PSObject.Properties['dependencies']) {
+              $pkg.dependencies.PSObject.Properties | ForEach-Object {
+                $deps += "$($_.Name)@$($_.Value)"
+              }
+            }
+
+            if ($deps.Count -eq 0) {
+              Write-Host "skip $plugin — no dependencies"
+              continue
+            }
+
+            Write-Host "warming $plugin ($($deps.Count) deps): $($deps -join ', ')"
+            # Mirror the exact flag shape openclaw's own install uses
+            # (bundled-runtime-deps-*.js:270 createBundledRuntimeDepsInstallArgs):
+            #   install --ignore-scripts + env legacy-peer-deps=true, package-lock=false, save=false
+            $installArgs = @($npm, 'install') + $deps + @(
+              '--prefix', $pluginDir,
+              '--ignore-scripts',
+              '--no-save', '--package-lock=false',
+              '--legacy-peer-deps', '--omit=dev'
+            )
+            & $node @installArgs 2>&1 | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+              throw "LAYER 3.5 FAIL: npm install for plugin $plugin exited $LASTEXITCODE"
+            }
+          }
+          Write-Host "LAYER 3.5 OK: pre-warmed startup plugin runtime deps"
+
       # ── Layer 4: openclaw gateway starts from the scratch runtime ────────────
 
       - name: Layer 4a — openclaw.mjs entry exists
