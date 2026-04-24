@@ -282,9 +282,17 @@ jobs:
           $stdoutLog = Join-Path $runtime "gateway-stdout.log"
           $stderrLog = Join-Path $runtime "gateway-stderr.log"
 
-          Write-Host "Spawning: $node $entry gateway run"
+          # --allow-unconfigured lets openclaw gateway start without a
+          # fully-populated openclaw.json (no provider, no channels).
+          # This layer is asking "can our bundled Node + fetched runtime
+          # actually reach a running gateway?", not "can it chat?".
+          # Production MyClaw does NOT use this flag — its config-sync
+          # writes provider / gateway.token / channels into openclaw.json
+          # before spawning.  If Layer 5 (MyClaw full launch) later fails
+          # to bind, the bug is in MyClaw's config-sync path, not here.
+          Write-Host "Spawning: $node $entry gateway run --allow-unconfigured"
           $gw = Start-Process -FilePath $node `
-                              -ArgumentList $entry, 'gateway', 'run' `
+                              -ArgumentList $entry, 'gateway', 'run', '--allow-unconfigured' `
                               -PassThru `
                               -RedirectStandardOutput $stdoutLog `
                               -RedirectStandardError $stderrLog `
