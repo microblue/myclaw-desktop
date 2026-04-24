@@ -1,21 +1,24 @@
 ---
 import BaseLayout from '@/layouts/BaseLayout.astro';
+import { setLanguage, t } from '@/lib/i18n';
+
+setLanguage('en');
 ---
 <BaseLayout
-  title="MyClaw.One Desktop — Your Personal AI Command Center"
-  description="Install MyClaw.One on macOS, Linux, or Windows. Own your AI agents, your data, your workflows."
+  title={t('go.pageTitle')}
+  description={t('go.description')}
   lang="en"
   canonicalPath="/"
 >
   <section class="mx-auto max-w-6xl px-4 py-20 text-center">
     <h1 class="text-5xl font-bold tracking-tight sm:text-6xl">
-      MyClaw.One Desktop
+      {t('go.heroTitle1')}<br />{t('go.heroTitle2')}
     </h1>
     <p class="mx-auto mt-6 max-w-2xl text-lg text-gray-600">
-      [Phase 2 placeholder] Port of Desktop.tsx lands in Phase 4.
+      {t('go.description')}
     </p>
     <p class="mt-10 text-sm text-gray-400">
-      Build toolchain: Astro + Tailwind · i18n via @openclaw/i18n (vendored).
+      Phase 3 verification — i18n rendering live at build time.
     </p>
   </section>
 </BaseLayout>

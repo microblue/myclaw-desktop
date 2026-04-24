@@ -1,21 +1,24 @@
 ---
 import BaseLayout from '@/layouts/BaseLayout.astro';
+import { setLanguage, t } from '@/lib/i18n';
+
+setLanguage('zh');
 ---
 <BaseLayout
-  title="MyClaw.One 桌面版 — 你的个人 AI 指挥中心"
-  description="在 macOS、Linux 或 Windows 上安装 MyClaw.One。掌控你自己的 AI agent、你的数据、你的工作流。"
+  title={t('go.pageTitle')}
+  description={t('go.description')}
   lang="zh"
   canonicalPath="/zh/"
 >
   <section class="mx-auto max-w-6xl px-4 py-20 text-center">
     <h1 class="text-5xl font-bold tracking-tight sm:text-6xl">
-      MyClaw.One 桌面版
+      {t('go.heroTitle1')}<br />{t('go.heroTitle2')}
     </h1>
     <p class="mx-auto mt-6 max-w-2xl text-lg text-gray-600">
-      [Phase 2 占位页] Desktop.tsx 迁移将在 Phase 4 完成。
+      {t('go.description')}
     </p>
     <p class="mt-10 text-sm text-gray-400">
-      构建工具链：Astro + Tailwind · i18n 通过 vendored @openclaw/i18n。
+      Phase 3 verification — i18n rendering live at build time.
     </p>
   </section>
 </BaseLayout>
