@@ -2,6 +2,12 @@
  * Electron Main Process Entry
  * Manages window creation, system tray, and IPC handlers
  */
+// MUST stay first — registers process.on('uncaughtException'/'unhandledRejection')
+// before any other module evaluates, so import-time throws (e.g. a missing
+// dynamic require) crash visibly to stderr instead of hanging on Electron's
+// default modal exception dialog.  See crash-handlers.ts for full rationale.
+import './crash-handlers';
+
 import { app, BrowserWindow, nativeImage, powerMonitor, powerSaveBlocker, session, shell } from 'electron';
 import type { Server } from 'node:http';
 import { join } from 'path';

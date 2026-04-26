@@ -8,25 +8,66 @@ import { getOpenClawDir, getOpenClawResolvedDir } from './paths';
 
 const require = createRequire(import.meta.url);
 
-// Resolve dependencies from OpenClaw package context (pnpm-safe)
-const openclawPath = getOpenClawDir();
-const openclawResolvedPath = getOpenClawResolvedDir();
-// Primary: resolves from openclaw's real (dereferenced) path in pnpm store.
-// In packaged builds this is the flat `resources/openclaw/node_modules/`.
-const openclawRequire = createRequire(join(openclawResolvedPath, 'package.json'));
-// Fallback: resolves from the symlink path (`node_modules/openclaw`).
-// In dev mode, Node walks UP from here to `<project>/node_modules/`, which
-// contains MyClaw's own devDependencies — packages that are NOT deps of openclaw
-// (e.g. @whiskeysockets/baileys) become resolvable through pnpm hoisting.
-const projectRequire = createRequire(join(openclawPath, 'package.json'));
+// All baileys + qrcode-terminal lookups happen LAZILY inside getBaileysDeps().
+// Doing it at module-load time crashes the entire main process on first launch
+// when @whiskeysockets/baileys isn't yet installed in ~/.myclaw/runtime/
+// (it's a transitive of openclaw's WhatsApp plugin which only lands when the
+// user actually configures WhatsApp).  See whatsapp-login bug 2026-04-25:
+// before this refactor, MyClaw.One.exe threw "Cannot find module
+// '@whiskeysockets/baileys/package.json'" at module evaluation, surfacing as
+// a modal "Uncaught Exception" dialog that blocked app startup.
 
-function resolveOpenClawPackageJson(packageName: string): string {
+interface BaileysError extends Error {
+    output?: { statusCode?: number };
+}
+
+interface BaileysDeps {
+    makeWASocket: (config: unknown) => BaileysSocket;
+    initAuth: (authDir: string) => Promise<{
+        state: unknown;
+        saveCreds: () => Promise<void>;
+    }>;
+    DisconnectReason: Record<string, number>;
+    fetchLatestBaileysVersion: () => Promise<{ version: unknown }>;
+    QRCode: new (typeNumber: number, errorCorrectionLevel: unknown) => {
+        addData(input: string): void;
+        make(): void;
+        getModuleCount(): number;
+        isDark(row: number, col: number): boolean;
+    };
+    QRErrorCorrectLevel: { L: unknown };
+    baileysPath: string;
+}
+
+// Use unknown for the socket type since it's truly dynamic.
+type BaileysSocket = {
+    ev: { on: (event: string, handler: (...a: unknown[]) => void) => void };
+    user?: { id: string };
+    end?: (err?: Error) => void;
+    logout?: () => Promise<void>;
+    [key: string]: unknown;
+};
+
+let baileysDepsCache: BaileysDeps | null = null;
+
+function resolveOpenClawPackageJson(
+    packageName: string,
+    openclawPath: string,
+    openclawResolvedPath: string,
+): string {
+    // Resolves from openclaw's real (dereferenced) path in pnpm store.
+    // In packaged builds this is the flat node_modules tree under runtime/.
+    const openclawRequire = createRequire(join(openclawResolvedPath, 'package.json'));
+    // Fallback: resolves from the symlink path (`node_modules/openclaw`).
+    // In dev mode, Node walks UP to `<project>/node_modules/`, which lets
+    // pnpm-hoisted packages (e.g. @whiskeysockets/baileys when added as a
+    // MyClaw devDependency) become resolvable.
+    const projectRequire = createRequire(join(openclawPath, 'package.json'));
+
     const specifier = `${packageName}/package.json`;
-    // 1. Try openclaw's own deps (works in packaged mode + openclaw transitive deps)
     try {
         return openclawRequire.resolve(specifier);
     } catch { /* fall through */ }
-    // 2. Fallback to project-level deps (works in dev mode for MyClaw devDependencies)
     try {
         return projectRequire.resolve(specifier);
     } catch (err) {
@@ -39,27 +80,41 @@ function resolveOpenClawPackageJson(packageName: string): string {
     }
 }
 
-const baileysPath = dirname(resolveOpenClawPackageJson('@whiskeysockets/baileys'));
-const qrCodeModulePath = openclawRequire.resolve('qrcode-terminal/vendor/QRCode/index.js');
-const qrErrorCorrectLevelPath = openclawRequire.resolve('qrcode-terminal/vendor/QRCode/QRErrorCorrectLevel.js');
+/**
+ * Lazily resolve and require baileys + qrcode-terminal modules.
+ *
+ * Caches the loaded deps in a module-scoped variable so subsequent calls are
+ * cheap.  Throws with a user-actionable message if baileys is missing — the
+ * UI-side handler should show "Please install the WhatsApp plugin via Plugins
+ * → Install" rather than rethrow.
+ */
+function getBaileysDeps(): BaileysDeps {
+    if (baileysDepsCache) return baileysDepsCache;
 
-// Load Baileys dependencies dynamically
-const {
-    default: makeWASocket,
-    useMultiFileAuthState: initAuth, // Rename to avoid React hook linter error
-    DisconnectReason,
-    fetchLatestBaileysVersion
-} = require(baileysPath);
+    const openclawPath = getOpenClawDir();
+    const openclawResolvedPath = getOpenClawResolvedDir();
 
-// Load QRCode dependencies dynamically
-const QRCodeModule = require(qrCodeModulePath);
-const QRErrorCorrectLevelModule = require(qrErrorCorrectLevelPath);
+    const baileysPath = dirname(
+        resolveOpenClawPackageJson('@whiskeysockets/baileys', openclawPath, openclawResolvedPath),
+    );
 
-// Types from Baileys (approximate since we don't have types for dynamic require)
-interface BaileysError extends Error {
-    output?: { statusCode?: number };
+    const openclawRequire = createRequire(join(openclawResolvedPath, 'package.json'));
+    const qrCodeModulePath = openclawRequire.resolve('qrcode-terminal/vendor/QRCode/index.js');
+    const qrErrorCorrectLevelPath = openclawRequire.resolve('qrcode-terminal/vendor/QRCode/QRErrorCorrectLevel.js');
+
+    const baileys = require(baileysPath);
+
+    baileysDepsCache = {
+        makeWASocket: baileys.default,
+        initAuth: baileys.useMultiFileAuthState,
+        DisconnectReason: baileys.DisconnectReason,
+        fetchLatestBaileysVersion: baileys.fetchLatestBaileysVersion,
+        QRCode: require(qrCodeModulePath),
+        QRErrorCorrectLevel: require(qrErrorCorrectLevelPath),
+        baileysPath,
+    };
+    return baileysDepsCache;
 }
-type BaileysSocket = ReturnType<typeof makeWASocket>;
 type ConnectionState = {
     connection: 'close' | 'open' | 'connecting';
     lastDisconnect?: {
@@ -70,10 +125,8 @@ type ConnectionState = {
 
 // --- QR Generation Logic (Adapted from OpenClaw) ---
 
-const QRCode = QRCodeModule;
-const QRErrorCorrectLevel = QRErrorCorrectLevelModule;
-
 function createQrMatrix(input: string) {
+    const { QRCode, QRErrorCorrectLevel } = getBaileysDeps();
     const qr = new QRCode(-1, QRErrorCorrectLevel.L);
     qr.addData(input);
     qr.make();
@@ -246,6 +299,22 @@ export class WhatsAppLoginManager extends EventEmitter {
     private async connectToWhatsApp(accountId: string): Promise<void> {
         if (!this.active) return;
 
+        // Lazy resolve baileys deps — throws a user-actionable error if the
+        // WhatsApp plugin (which brings @whiskeysockets/baileys as a transitive
+        // dep) hasn't been installed into ~/.myclaw/runtime/.
+        let deps: ReturnType<typeof getBaileysDeps>;
+        try {
+            deps = getBaileysDeps();
+        } catch (err) {
+            const reason = err instanceof Error ? err.message : String(err);
+            this.emit('error', new Error(
+                `WhatsApp support not yet installed. Install the WhatsApp plugin from Plugins → Install. (${reason})`,
+            ));
+            this.active = false;
+            return;
+        }
+        const { makeWASocket, initAuth, fetchLatestBaileysVersion, baileysPath } = deps;
+
         try {
             // Path where OpenClaw expects WhatsApp credentials
             const authDir = join(homedir(), '.openclaw', 'credentials', 'whatsapp', accountId);
@@ -337,7 +406,7 @@ export class WhatsAppLoginManager extends EventEmitter {
                     if (connection === 'close') {
                         const error = lastDisconnect?.error as BaileysError | undefined;
                         const statusCode = error?.output?.statusCode;
-                        const isLoggedOut = statusCode === DisconnectReason.loggedOut;
+                        const isLoggedOut = statusCode === deps.DisconnectReason.loggedOut;
                         // Treat 401 as transient if we haven't exhausted retries (max 2 attempts)
                         // This handles the case where WhatsApp's session hasn't fully released
                         const shouldReconnect = !isLoggedOut || this.retryCount < 2;
@@ -360,7 +429,7 @@ export class WhatsAppLoginManager extends EventEmitter {
                         } else {
                             // Logged out or explicitly stopped
                             this.active = false;
-                            if (error?.output?.statusCode === DisconnectReason.loggedOut) {
+                            if (error?.output?.statusCode === deps.DisconnectReason.loggedOut) {
                                 try {
                                     rmSync(authDir, { recursive: true, force: true });
                                 } catch (err) {

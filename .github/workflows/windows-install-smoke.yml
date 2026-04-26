@@ -496,20 +496,26 @@ jobs:
       # WHERE MyClaw is stuck when things go wrong (runtime install
       # running? config written? gateway spawn in progress?).
 
-      # Steps 22-24 (manual Launch + Playwright E2E) are marked
-      # continue-on-error because GitHub Actions' Windows runner cannot
-      # reliably run Electron apps via manual spawn: MyClaw.One.exe loads
-      # the main bundle but app.whenReady() never fires.  Runs 24884026055
-      # and 24899238419 both showed the same pattern — process alive for
-      # 900s with ~0 CPU, no stdout, no stderr, no userData directory, no
-      # JS-side logs.  This environment quirk does NOT affect real users
-      # (Playwright and the underlying openclaw gateway are both verified
-      # separately: Layer 4 runs the real openclaw gateway under bundled
-      # node and confirms it binds 18789, so the openclaw integration is
-      # proven).  Let the job continue so the uninstall/reinstall
-      # regression checks (steps 29-38) still run.
+      # IMPORTANT: continue-on-error was REMOVED on 2026-04-25.  The
+      # previous "Electron-on-Windows-CI environment quirk" hypothesis
+      # (CPU ~0, no logs, no userData) was actually a real bug
+      # masquerading as an environment issue: the main bundle was
+      # throwing at top-level (`@whiskeysockets/baileys` missing after
+      # the v1.5.0 architectural shift), and Electron's default modal
+      # "Uncaught Exception" dialog was blocking the process.  No human
+      # to click OK in CI → process alive but inert.
+      #
+      # Crash handlers are now installed FIRST in main/index.ts (via a
+      # side-effect import of crash-handlers.ts — ESM dependency-order
+      # evaluation guarantees they're registered before any other
+      # module's body runs).  Future top-level throws now log to stderr
+      # and exit non-zero, surfacing as a real Launch-step failure with
+      # a stack trace in our redirected err.log.
+      #
+      # Re-introduce hard-fail: if MyClaw doesn't make filesystem
+      # progress (~/.myclaw/runtime/ created, ~/.openclaw/openclaw.json
+      # written) within the wait window, treat as failure.
       - name: Launch MyClaw + wait for gateway 18789 + HTTP probe
-        continue-on-error: true
         shell: pwsh
         run: |
           $exe = "${{ steps.install-path.outputs.exe }}"
@@ -545,7 +551,12 @@ jobs:
           #   --disable-dev-shm-usage: /dev/shm tricks (Linux-origin) — harmless
           #                            on Windows but kept for symmetry with
           #                            what Puppeteer/Playwright pass by default
-          $electronFlags = '--enable-logging=stderr --v=1 --no-sandbox --disable-gpu --disable-dev-shm-usage'
+          # --noerrdialogs is a Chromium flag that suppresses the
+          # built-in error/crash dialog.  Belt-and-suspenders next to
+          # crash-handlers.ts — if any code path slips past our
+          # uncaughtException handler, this prevents a modal dialog
+          # from blocking the CI runner.
+          $electronFlags = '--enable-logging=stderr --v=1 --no-sandbox --disable-gpu --disable-dev-shm-usage --noerrdialogs'
           $batLine = '"' + $exe + '" ' + $electronFlags + ' > "' + $outLog + '" 2> "' + $errLog + '"'
           $batContent = "@echo off`r`n" + $batLine + "`r`n"
           Set-Content -Path $batFile -Value $batContent -Encoding ascii -NoNewline
@@ -593,13 +604,16 @@ jobs:
           # Electron userData defaults to %APPDATA%\<productName>; productName is MyClaw.One
           $appLogs = Join-Path $env:APPDATA "MyClaw.One\logs"
 
-          # Short wait — CI Electron manual-launch path is known broken
-          # on windows-latest (app.whenReady never fires, 0 output).  We
-          # keep this step as diagnostic evidence but don't burn 15
-          # minutes waiting on what we already know will time out.  The
-          # real smoke verification is Layer 4 (gateway) + uninstall
-          # canary tests (steps 29+).
-          $totalWaitSec = 60
+          # 600s covers a worst-case cold first-launch on windows-latest:
+          # MyClaw's ensure_myclaw_runtime_installed runs `npm install
+          # openclaw + plugins` into ~/.myclaw/runtime/ (3-5 min observed
+          # for Layer 3's identical install), then spawns the gateway
+          # which itself takes ~30s to bind 18789 on first boot.  Once
+          # the gateway port is listening or MyClaw exits non-zero with a
+          # crash trace, we exit early — the hard cap mostly matters
+          # when the app deadlocks silently (which shouldn't happen now
+          # that crash-handlers.ts catches uncaught exceptions).
+          $totalWaitSec = 600
           $start = Get-Date
           $deadline = $start.AddSeconds($totalWaitSec)
           $found = $false
