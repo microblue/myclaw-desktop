@@ -148,6 +148,12 @@ const gotTheLock = gotElectronLock && gotFileLock;
 
 // Global references
 let mainWindow: BrowserWindow | null = null;
+// Set true once createMainWindow() runs for the first time.  Used to guard
+// the window-all-closed handler against firing during the gap between
+// progress?.close() and createMainWindow() inside initialize() — which
+// would otherwise trigger a spurious app.quit() that races the rest of
+// init and leaves the gateway half-started (smoke test 24944324317).
+let mainWindowEverCreated = false;
 let gatewayManager!: GatewayManager;
 let clawHubService!: ClawHubService;
 let hostEventBus!: HostEventBus;
@@ -292,6 +298,7 @@ function createMainWindow(): BrowserWindow {
   });
 
   mainWindow = win;
+  mainWindowEverCreated = true;
   return win;
 }
 
@@ -725,9 +732,16 @@ if (gotTheLock) {
   });
 
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') {
-      app.quit();
+    if (process.platform === 'darwin') return;
+    if (!mainWindowEverCreated) {
+      // We're still inside initialize(): the runtime-progress window just
+      // closed but createMainWindow() hasn't run yet (or is mid-await on
+      // telemetry/proxy/etc).  Letting app.quit() fire here would invoke
+      // before-quit cleanup mid-init and abort the gateway start.
+      logger.debug('window-all-closed before mainWindow ever created; skipping app.quit() (init race guard)');
+      return;
     }
+    app.quit();
   });
 
   app.on('before-quit', (event) => {
