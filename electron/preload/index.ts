@@ -85,6 +85,10 @@ const electronAPI = {
         'provider:validateKey',
         'provider:requestOAuth',
         'provider:cancelOAuth',
+        // Dashboard-pure auth: spawn `openclaw models auth login`
+        'openclaw:authLogin',
+        'openclaw:authCancel',
+        'openclaw:statusSnapshot',
         // Cron
         'cron:list',
         'cron:create',
@@ -179,6 +183,7 @@ const electronAPI = {
         'oauth:success',
         'oauth:error',
         'openclaw:cli-installed',
+        'openclaw:auth-log',
       ];
 
       if (validChannels.includes(channel)) {

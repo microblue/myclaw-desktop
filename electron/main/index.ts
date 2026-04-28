@@ -25,7 +25,6 @@ import { initTelemetry } from '../utils/telemetry';
 import { ClawHubService } from '../gateway/clawhub';
 import { ensureMyClawContext, repairMyClawOnlyBootstrapFiles } from '../utils/openclaw-workspace';
 import { autoInstallCliIfNeeded, generateCompletionCache, installCompletionToProfile } from '../utils/openclaw-cli';
-import { hasResetOpenClawFlag, resetOpenClawData } from '../utils/reset-openclaw';
 import {
   check_version_compat,
   ensure_myclaw_runtime_installed,
@@ -42,9 +41,9 @@ import { isQuitting, setQuitting } from './app-state';
 import { applyProxySettings } from './proxy';
 import { syncLaunchAtStartupSettingFromStore } from './launch-at-startup';
 import * as launchAtStartupModule from './launch-at-startup';
-import { maybeShowAutoLoginHintOnce } from './auto-login-hint';
-import * as autoLoginHintModule from './auto-login-hint';
 import * as storeModule from '../utils/store';
+import * as openclawAuthRunnerModule from '../utils/openclaw-auth-runner';
+import * as openclawStatusModule from '../utils/openclaw-status';
 import {
   clearPendingSecondInstanceFocus,
   consumeMainWindowReady,
@@ -77,10 +76,11 @@ if (isE2EMode && requestedUserDataDir) {
 
 if (isE2EMode) {
   (globalThis as { __myclawE2E?: unknown }).__myclawE2E = {
-    autoLoginHint: autoLoginHintModule,
     store: storeModule,
     tray: trayModule,
     launchAtStartup: launchAtStartupModule,
+    openclawAuthRunner: openclawAuthRunnerModule,
+    openclawStatus: openclawStatusModule,
   };
 }
 
@@ -486,14 +486,11 @@ async function initialize(): Promise<void> {
   // Note: Auto-check for updates is driven by the renderer (update store init)
   // so it respects the user's "Auto-check for updates" setting.
 
-  // Repair any bootstrap files that only contain MyClaw markers (no OpenClaw
-  // template content). This fixes a race condition where ensureMyClawContext()
-  // previously created the file before the gateway could seed the full template.
-  if (!isE2EMode) {
-    void repairMyClawOnlyBootstrapFiles().catch((error) => {
-      logger.warn('Failed to repair bootstrap files:', error);
-    });
-  }
+  // Bootstrap file repair + MyClaw context merge are gated on the gateway
+  // 'running' event (see gatewayManager.on('status') handler below).  Running
+  // them eagerly here used to race with the gateway's own seed routine and
+  // produce 30s of "still missing after retries" warnings when the gateway
+  // had not yet written its workspace template.
 
   // Pre-deploy built-in skills (feishu-doc, feishu-drive, feishu-perm, feishu-wiki)
   // to ~/.openclaw/skills/ so they are immediately available without manual install.
@@ -523,9 +520,23 @@ async function initialize(): Promise<void> {
 
   // Bridge gateway and host-side events before any auto-start logic runs, so
   // renderer subscribers observe the full startup lifecycle.
+  let bootstrapRepaired = false;
   gatewayManager.on('status', (status: { state: string }) => {
     hostEventBus.emit('gateway:status', status);
     if (status.state === 'running' && !isE2EMode) {
+      // First time the gateway becomes ready, repair any MyClaw-only stub
+      // bootstrap files left behind by the previous race-prone codepath, then
+      // merge MyClaw context.  Both run AFTER the gateway has had a chance to
+      // seed its own workspace templates.
+      if (!bootstrapRepaired) {
+        bootstrapRepaired = true;
+        void repairMyClawOnlyBootstrapFiles()
+          .then(() => ensureMyClawContext())
+          .catch((error) => {
+            logger.warn('Failed to repair/merge bootstrap files after gateway running:', error);
+          });
+        return;
+      }
       void ensureMyClawContext().catch((error) => {
         logger.warn('Failed to re-merge MyClaw context after gateway reconnect:', error);
       });
@@ -628,9 +639,6 @@ async function initialize(): Promise<void> {
       logger.debug('Auto-starting Gateway...');
       await gatewayManager.start();
       logger.info('Gateway auto-start succeeded');
-      void maybeShowAutoLoginHintOnce(mainWindow ?? undefined).catch((err) => {
-        logger.warn('[AutoLoginHint] failed:', err);
-      });
     } catch (error) {
       logger.error('Gateway auto-start failed:', error);
       mainWindow?.webContents.send('gateway:error', String(error));
@@ -641,14 +649,8 @@ async function initialize(): Promise<void> {
     logger.info('Gateway auto-start disabled in settings');
   }
 
-  // Merge MyClaw context snippets into the workspace bootstrap files.
-  // The gateway seeds workspace files asynchronously after its HTTP server
-  // is ready, so ensureMyClawContext will retry until the target files appear.
-  if (!isE2EMode) {
-    void ensureMyClawContext().catch((error) => {
-      logger.warn('Failed to merge MyClaw context into workspace:', error);
-    });
-  }
+  // MyClaw context merge is gated on the gateway 'running' event (handler above),
+  // so the workspace template files exist by the time we touch them.
 
   // Auto-install openclaw CLI and shell completions (non-blocking).
   if (!isE2EMode) {
@@ -682,17 +684,6 @@ if (gotTheLock) {
 
   if (process.platform === 'win32') {
     app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
-  }
-
-  // --reset-openclaw: wipe ~/.openclaw before any subsystem touches it.
-  // Set either via CLI (`myclaw --reset-openclaw`) or via the menu-driven
-  // relaunch path in menu.ts → both converge here, guaranteeing the wipe
-  // happens in a fresh process with no Gateway holding file handles.
-  if (hasResetOpenClawFlag()) {
-    const result = resetOpenClawData();
-    logger.info(
-      `[boot] --reset-openclaw: ok=${result.ok} path=${result.path}${result.error ? ` error=${result.error}` : ''}`,
-    );
   }
 
   gatewayManager = new GatewayManager();

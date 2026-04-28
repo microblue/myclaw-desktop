@@ -18,6 +18,44 @@ export interface DesktopRelease {
 
 const DESKTOP_RELEASES: DesktopRelease[] = [
     {
+        version: '1.7.0',
+        date: '2026-04-28',
+        changes: [
+            {
+                kind: 'highlight',
+                text: 'New Settings status panel: a glance-able view of "what is installed and what is configured" — runtime version, provider count, channel count — plus one-click buttons to repair the runtime or re-sign in to a provider. Advanced diagnostics tucked into a collapsible section so the main view stays clean.'
+            },
+            {
+                kind: 'highlight',
+                text: 'OAuth flows are now delegated to openclaw\'s own `models auth login` CLI instead of being re-implemented in MyClaw. ~2000 lines of OAuth protocol code removed from the desktop app, fixing Apple/macOS sign-in failures caused by Dock-launched apps having a minimal PATH.'
+            },
+            {
+                kind: 'highlight',
+                text: 'Channel doctor validation now runs through Electron\'s utilityProcess instead of shelling out to a global `node` binary, eliminating ENOENT failures on user machines without a system-wide Node install.'
+            },
+            {
+                kind: 'highlight',
+                text: 'Bundled `@google/gemini-cli-core` into the runtime install so Google OAuth has a guaranteed local oauth2.js — first-launch sign-in no longer depends on user PATH, network, or pre-existing global installs.'
+            },
+            {
+                kind: 'fix',
+                text: 'Bootstrap workspace files (.md templates) are now merged only after the gateway is running, eliminating "missing after retries" warnings caused by racing the gateway\'s own seed step.'
+            },
+            {
+                kind: 'fix',
+                text: 'Removed the unused "Reset OpenClaw data" menu item and the auto-login hint popup that ran every launch.'
+            },
+            {
+                kind: 'highlight',
+                text: 'Cross-platform install-smoke tests: macOS DMG and Linux AppImage now have dedicated CI workflows verifying that packaged binaries actually launch and complete first-launch openclaw runtime install on a clean machine.'
+            },
+            {
+                kind: 'fix',
+                text: '中文界面 "Agents" 统一翻译为 "智能体"。'
+            }
+        ]
+    },
+    {
         version: '1.6.4',
         date: '2026-04-28',
         changes: [

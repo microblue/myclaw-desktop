@@ -49,11 +49,5 @@ test.describe('Tray behavior', () => {
         'Quit MyClaw',
       ]),
     );
-
-    if (process.platform === 'win32') {
-      expect(labels).toContain('配置开机自动启动...');
-    } else {
-      expect(labels).not.toContain('配置开机自动启动...');
-    }
   });
 });

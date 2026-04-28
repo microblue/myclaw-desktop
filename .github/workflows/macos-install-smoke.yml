@@ -1,0 +1,138 @@
+name: macOS Install Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'electron/**'
+      - 'scripts/**'
+      - 'electron-builder.yml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/macos-install-smoke.yml'
+      - 'tests/e2e/install-smoke.spec.ts'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  install-smoke:
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build macOS package (dmg, unsigned)
+        env:
+          # Skip code-signing for smoke runs — we just want to verify
+          # the dmg packs correctly and the .app launches.  CSC_LINK
+          # would require a real Developer ID cert that's not in CI.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: pnpm run package:mac
+
+      - name: Locate dmg
+        id: locate
+        run: |
+          dmg=$(find release -maxdepth 2 -name "MyClaw.One-*.dmg" -type f | head -n 1)
+          if [ -z "$dmg" ]; then
+            echo "dmg not found under release/"
+            ls -la release || true
+            exit 1
+          fi
+          echo "Found dmg: $dmg"
+          echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
+
+      - name: Seed .openclaw canary (regression guard)
+        run: |
+          mkdir -p "$HOME/.openclaw"
+          echo "canary-mac-$(date)" > "$HOME/.openclaw/canary.txt"
+          ls -la "$HOME/.openclaw/"
+
+      - name: Mount dmg and copy .app
+        id: mount
+        run: |
+          dmg="${{ steps.locate.outputs.dmg }}"
+          mountdir=$(mktemp -d)
+          # Use -nobrowse so Finder doesn't open and -noverify to skip
+          # checksum (smoke runs always use freshly-built dmg).
+          hdiutil attach "$dmg" -mountpoint "$mountdir" -nobrowse -noverify
+          app=$(find "$mountdir" -maxdepth 2 -name "*.app" -type d | head -n 1)
+          if [ -z "$app" ]; then
+            echo ".app not found in dmg"
+            ls -la "$mountdir"
+            hdiutil detach "$mountdir" || true
+            exit 1
+          fi
+          echo "Found .app in dmg: $app"
+          target="/Applications/$(basename "$app")"
+          # Remove any pre-existing copy from a prior run.
+          rm -rf "$target"
+          cp -R "$app" /Applications/
+          hdiutil detach "$mountdir" || true
+          echo "Installed to: $target"
+          # Walk into Contents/MacOS to find the executable.
+          exe=$(find "$target/Contents/MacOS" -maxdepth 1 -type f -perm +111 | head -n 1)
+          if [ -z "$exe" ]; then
+            echo "Executable not found in $target/Contents/MacOS"
+            ls -la "$target/Contents/MacOS"
+            exit 1
+          fi
+          echo "Executable: $exe"
+          echo "app=$target" >> "$GITHUB_OUTPUT"
+          echo "exe=$exe" >> "$GITHUB_OUTPUT"
+
+      - name: Verify canary survived install
+        run: |
+          test -f "$HOME/.openclaw/canary.txt" || { echo "canary lost!"; exit 1; }
+          echo "Canary OK"
+
+      - name: Smoke launch — verify binary runs
+        run: |
+          exe="${{ steps.mount.outputs.exe }}"
+          # Quick liveness check — launch in background, give it 30s to
+          # show its windowed UI bootstrapping, then kill.  The Playwright
+          # phase below does the deeper validation.
+          nohup "$exe" --no-sandbox >/tmp/myclaw-launch.log 2>&1 &
+          pid=$!
+          sleep 10
+          if ! ps -p $pid >/dev/null; then
+            echo "Process died early; log:"
+            cat /tmp/myclaw-launch.log || true
+            exit 1
+          fi
+          echo "Process alive after 10s (pid=$pid), terminating for Playwright phase"
+          kill -TERM $pid || true
+          wait $pid 2>/dev/null || true
+
+      - name: Run install-smoke E2E against installed .app
+        env:
+          MYCLAW_INSTALLED_EXE: ${{ steps.mount.outputs.exe }}
+        run: |
+          pnpm exec playwright test tests/e2e/install-smoke.spec.ts --reporter=list
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-install-smoke-artifacts
+          path: |
+            playwright-report
+            test-results
+            /tmp/myclaw-launch.log
+          if-no-files-found: warn
+          retention-days: 7

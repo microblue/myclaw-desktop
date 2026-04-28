@@ -1,6 +1,6 @@
 {
     "name": "myclaw-desktop",
-    "version": "1.6.4",
+    "version": "1.7.0",
     "default_backend": "openclaw",
     "available_backends": {
         "openclaw": {
@@ -12,7 +12,8 @@
                 "@wecom/wecom-openclaw-plugin": "^2026.4.3",
                 "@tencent-connect/openclaw-qqbot": "^1.7.1",
                 "@larksuite/openclaw-lark": "2026.4.1",
-                "@tencent-weixin/openclaw-weixin": "^2.1.8"
+                "@tencent-weixin/openclaw-weixin": "^2.1.8",
+                "@google/gemini-cli-core": "^0.39.1"
             }
         }
     },

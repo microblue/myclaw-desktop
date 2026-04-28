@@ -23,6 +23,7 @@ import { useSettingsStore } from '@/stores/settings';
 import { useGatewayStore } from '@/stores/gateway';
 import { useUpdateStore } from '@/stores/update';
 import { UpdateSettings } from '@/components/settings/UpdateSettings';
+import { MyClawStatusPanel } from '@/components/settings/MyClawStatusPanel';
 import {
   getGatewayWsDiagnosticEnabled,
   invokeIpc,
@@ -496,6 +497,11 @@ export function Settings() {
 
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto pr-2 pb-10 min-h-0 -mr-2 space-y-12">
+
+          {/* MyClaw Status */}
+          <MyClawStatusPanel />
+
+          <Separator className="bg-black/5 dark:bg-white/5" />
 
           {/* Appearance */}
           <div>

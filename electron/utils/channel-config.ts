@@ -9,7 +9,6 @@ import { write_atomic_json } from './atomic-json';
 import { constants } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { getOpenClawResolvedDir } from './paths';
 import * as logger from './logger';
 import { proxyAwareFetch } from './proxy-fetch';
 import { withConfigLock } from './config-mutex';
@@ -1416,39 +1415,21 @@ async function validateTelegramCredentials(
 }
 
 export async function validateChannelConfig(channelType: string): Promise<ValidationResult> {
-    const { exec } = await import('child_process');
+    const { runOpenClawDoctor } = await import('./openclaw-doctor');
     const resolvedChannelType = resolveStoredChannelType(channelType);
 
     const result: ValidationResult = { valid: true, errors: [], warnings: [] };
 
     try {
-        const openclawPath = getOpenClawResolvedDir();
+        // Use utilityProcess.fork via runOpenClawDoctor() — never shell out to
+        // bare `node`, which fails on user machines without a global Node install.
+        const doctorResult = await runOpenClawDoctor();
+        const output = `${doctorResult.stdout || ''}${doctorResult.stderr || ''}`;
 
-        // Run openclaw doctor command to validate config (async to avoid
-        // blocking the main thread).
-        const runDoctor = async (command: string): Promise<string> =>
-            await new Promise<string>((resolve, reject) => {
-                exec(
-                    command,
-                    {
-                        cwd: openclawPath,
-                        encoding: 'utf-8',
-                        timeout: 30000,
-                        windowsHide: true,
-                    },
-                    (err, stdout, stderr) => {
-                        const combined = `${stdout || ''}${stderr || ''}`;
-                        if (err) {
-                            const next = new Error(combined || err.message);
-                            reject(next);
-                            return;
-                        }
-                        resolve(combined);
-                    },
-                );
-            });
-
-        const output = await runDoctor(`node openclaw.mjs doctor 2>&1`);
+        if (!doctorResult.success && !output) {
+            const reason = doctorResult.error || `exit ${doctorResult.exitCode ?? 'null'}`;
+            throw new Error(`openclaw doctor failed: ${reason}`);
+        }
 
         const parsedDoctor = parseDoctorValidationOutput(resolvedChannelType, output);
         result.errors.push(...parsedDoctor.errors);

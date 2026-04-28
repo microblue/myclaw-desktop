@@ -1,0 +1,139 @@
+name: Linux Install Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'electron/**'
+      - 'scripts/**'
+      - 'electron-builder.yml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/linux-install-smoke.yml'
+      - 'tests/e2e/install-smoke.spec.ts'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  install-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: System packages required for Electron + AppImage
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb \
+            libgtk-3-0 \
+            libnss3 \
+            libgbm1 \
+            libxss1 \
+            libasound2t64 \
+            fuse \
+            libfuse2
+
+      - name: Build Linux package (AppImage)
+        run: pnpm run package:linux
+
+      - name: Locate AppImage
+        id: locate
+        run: |
+          appimage=$(find release -maxdepth 2 -name "MyClaw.One-*.AppImage" -type f | head -n 1)
+          if [ -z "$appimage" ]; then
+            echo "AppImage not found under release/"
+            ls -la release || true
+            exit 1
+          fi
+          chmod +x "$appimage"
+          echo "Found AppImage: $appimage"
+          echo "appimage=$appimage" >> "$GITHUB_OUTPUT"
+
+      - name: Seed .openclaw canary (regression guard)
+        run: |
+          mkdir -p "$HOME/.openclaw"
+          echo "canary-linux-$(date -u +%FT%TZ)" > "$HOME/.openclaw/canary.txt"
+          ls -la "$HOME/.openclaw/"
+
+      - name: Extract AppImage to a writable dir
+        id: extract
+        run: |
+          # Running AppImage --appimage-extract avoids needing FUSE under
+          # the strict CI sandbox.  The extracted squashfs-root is fully
+          # functional — same files Playwright would launch from a mounted
+          # AppImage.
+          extract_dir=$(mktemp -d)
+          cd "$extract_dir"
+          "${{ steps.locate.outputs.appimage }}" --appimage-extract >/dev/null
+          # squashfs-root contains AppRun + the Electron binary.
+          exe="$extract_dir/squashfs-root/myclaw-desktop"
+          if [ ! -x "$exe" ]; then
+            # Fall back to the AppRun launcher if the named binary differs.
+            exe="$extract_dir/squashfs-root/AppRun"
+          fi
+          if [ ! -x "$exe" ]; then
+            echo "No executable found in extracted AppImage:"
+            ls -la "$extract_dir/squashfs-root" | head -40
+            exit 1
+          fi
+          echo "Executable: $exe"
+          echo "exe=$exe" >> "$GITHUB_OUTPUT"
+
+      - name: Verify canary survived extract
+        run: |
+          test -f "$HOME/.openclaw/canary.txt" || { echo "canary lost!"; exit 1; }
+          echo "Canary OK"
+
+      - name: Smoke launch — verify binary boots
+        run: |
+          exe="${{ steps.extract.outputs.exe }}"
+          # Quick liveness check under xvfb.  If process dies in 10s the
+          # log captures the reason.
+          xvfb-run -a "$exe" --no-sandbox >/tmp/myclaw-launch.log 2>&1 &
+          pid=$!
+          sleep 10
+          if ! ps -p $pid >/dev/null; then
+            echo "Process died early; log:"
+            cat /tmp/myclaw-launch.log || true
+            exit 1
+          fi
+          echo "Process alive after 10s (pid=$pid), terminating for Playwright phase"
+          kill -TERM $pid || true
+          # Don't fail the wait — Electron's signal handling sometimes
+          # exits non-zero on SIGTERM.
+          wait $pid 2>/dev/null || true
+
+      - name: Run install-smoke E2E against extracted AppImage
+        env:
+          MYCLAW_INSTALLED_EXE: ${{ steps.extract.outputs.exe }}
+        run: |
+          xvfb-run -a pnpm exec playwright test tests/e2e/install-smoke.spec.ts --reporter=list
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-install-smoke-artifacts
+          path: |
+            playwright-report
+            test-results
+            /tmp/myclaw-launch.log
+          if-no-files-found: warn
+          retention-days: 7

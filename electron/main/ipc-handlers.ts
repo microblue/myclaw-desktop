@@ -1419,6 +1419,13 @@ function registerOpenClawHandlers(gatewayManager: GatewayManager): void {
     return status;
   });
 
+  // Aggregated status snapshot for the Settings status panel — runtime
+  // + config + plugins, in a user-facing shape.
+  ipcMain.handle('openclaw:statusSnapshot', async () => {
+    const { getOpenClawStatusSnapshot } = await import('../utils/openclaw-status');
+    return getOpenClawStatusSnapshot();
+  });
+
   // Check if OpenClaw is ready (package present)
   ipcMain.handle('openclaw:isReady', () => {
     const status = getOpenClawStatus();
@@ -1693,6 +1700,53 @@ function registerDeviceOAuthHandlers(mainWindow: BrowserWindow): void {
       return { success: true };
     } catch (error) {
       logger.error('provider:cancelOAuth failed', error);
+      return { success: false, error: String(error) };
+    }
+  });
+
+  // Dashboard-pure auth flow: delegate to `openclaw models auth login`.
+  // MyClaw spawns the subprocess and streams its log lines back to the
+  // renderer via webContents.send('openclaw:auth-log').
+  ipcMain.handle(
+    'openclaw:authLogin',
+    async (
+      _,
+      payload: { provider: string; method?: string; setDefault?: boolean },
+    ) => {
+      try {
+        const { runOpenClawAuthLogin } = await import('../utils/openclaw-auth-runner');
+        const result = await runOpenClawAuthLogin({
+          ...payload,
+          onLog: (line, stream) => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('openclaw:auth-log', { line, stream });
+            }
+          },
+        });
+        return result;
+      } catch (error) {
+        logger.error('openclaw:authLogin failed', error);
+        return {
+          success: false,
+          exitCode: null,
+          stdout: '',
+          stderr: '',
+          command: '',
+          cwd: '',
+          durationMs: 0,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  );
+
+  ipcMain.handle('openclaw:authCancel', async () => {
+    try {
+      const { cancelOpenClawAuth } = await import('../utils/openclaw-auth-runner');
+      await cancelOpenClawAuth();
+      return { success: true };
+    } catch (error) {
+      logger.error('openclaw:authCancel failed', error);
       return { success: false, error: String(error) };
     }
   });

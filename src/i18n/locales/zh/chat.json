@@ -19,10 +19,10 @@
     },
     "composer": {
         "attachFiles": "添加文件",
-        "pickAgent": "选择 Agent",
-        "clearTarget": "清除目标 Agent",
+        "pickAgent": "选择智能体",
+        "clearTarget": "清除目标智能体",
         "targetChip": "@{{agent}}",
-        "agentPickerTitle": "将下一条消息直接发送给其他 Agent",
+        "agentPickerTitle": "将下一条消息直接发送给其他智能体",
         "gatewayDisconnectedPlaceholder": "网关未连接...",
         "send": "发送",
         "stop": "停止",

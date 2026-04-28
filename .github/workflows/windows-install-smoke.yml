@@ -787,6 +787,18 @@ jobs:
           }
           Start-Sleep -Seconds 5
 
+      - name: Install-smoke E2E (cross-platform main flow)
+        # Verifies the *new* status-panel + auth-runner contract on the
+        # packaged binary.  Doesn't require OPENROUTER_TEST_API_KEY, so
+        # always runs.  Pairs with macos-install-smoke and
+        # linux-install-smoke for parity across all three platforms.
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          MYCLAW_INSTALLED_EXE: ${{ steps.install-path.outputs.exe }}
+        run: |
+          pnpm exec playwright test tests/e2e/install-smoke.spec.ts --reporter=list
+
       - name: Post-install E2E (user journey via Playwright)
         continue-on-error: true
         # Playwright in this environment has shown runs > 15min waiting
