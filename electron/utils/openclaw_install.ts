@@ -348,23 +348,48 @@ export async function ensure_myclaw_runtime_installed(
 
   mkdirSync(state.runtime_dir, { recursive: true });
 
-  // Install openclaw + each preinstalled plugin in a SINGLE `npm install`
-  // invocation.  npm resolves them together so shared transitive deps
-  // dedupe into one flat node_modules tree under <runtime>/node_modules/.
-  const plugins = read_preinstalled_plugins(app_path);
-  const package_specs = [
-    `openclaw@${state.configured_version}`,
-    ...Object.entries(plugins).map(([name, version]) => `${name}@${version}`),
-  ];
-
+  // Two-pass install.  Pass 1 brings in openclaw + its native deps
+  // (sharp, koffi, protobufjs, ...) with all lifecycle scripts enabled
+  // — openclaw's own postinstall is what installs each bundled plugin's
+  // runtime deps inside dist/extensions/*/node_modules/, and sharp /
+  // koffi need their `install` scripts to fetch platform-specific
+  // prebuilds.
   await run_npm_install({
     node_binary,
     npm_cli,
-    package_specs,
+    package_specs: [`openclaw@${state.configured_version}`],
     prefix: state.runtime_dir,
     on_log,
     extra_args: extra_npm_args,
   });
+
+  // Pass 2 brings in the messaging-platform plugins listed in
+  // package.json's available_backends.openclaw.preinstalled_plugins
+  // WITHOUT lifecycle scripts.  Reason: at least one of them ships a
+  // postinstall using bash-only syntax (`2>/dev/null || true`) that
+  // cmd.exe can't parse, breaking install on Windows boxes that lack
+  // a MSYS2 / Git Bash `true.exe` on PATH.  The `|| true` author-intent
+  // is "best-effort, ignore failures", which `--ignore-scripts` honours
+  // exactly.  None of the plugins we ship needs install-time scripts
+  // to function at runtime — they're pure-JS messaging adapters whose
+  // SDK linking happens lazily.  CI smoke didn't catch this because
+  // GitHub Windows runners include Git Bash → `true.exe` resolves and
+  // the `|| true` clause masks the failure (see
+  // 24944324317-vs-25008776136 logs).
+  const plugins = read_preinstalled_plugins(app_path);
+  const plugin_specs = Object.entries(plugins).map(
+    ([name, version]) => `${name}@${version}`,
+  );
+  if (plugin_specs.length > 0) {
+    await run_npm_install({
+      node_binary,
+      npm_cli,
+      package_specs: plugin_specs,
+      prefix: state.runtime_dir,
+      on_log,
+      extra_args: [...extra_npm_args, '--ignore-scripts'],
+    });
+  }
 
   return { version: state.configured_version, was_installed: true };
 }

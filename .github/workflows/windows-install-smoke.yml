@@ -530,19 +530,31 @@ jobs:
           # forces the bundled-node directory we now prepend in
           # openclaw_install.ts:run_npm_install() to be the only viable
           # node, so a regression of that augmentation surfaces here.
-          Write-Host "=== Stripping global Node.js from PATH ==="
+          Write-Host "=== Stripping global Node.js + Unix-emulation tools from PATH ==="
+          # Also drop dirs that ship MSYS2 / Git Bash POSIX builtins
+          # (true.exe, cat.exe, sh.exe).  Reason: a buggy plugin
+          # postinstall on Windows like
+          #   `node scripts/foo.js 2>/dev/null || true`
+          # silently passes on the runner because Git Bash's `true.exe`
+          # resolves and the || branch returns 0 — masking the error
+          # for users without Git Bash on PATH (real-world v1.6.2 break).
+          # Force the same failure mode here as a clean Windows box.
           $beforeNode = (Get-Command node -ErrorAction SilentlyContinue).Source
-          Write-Host "node before strip: $beforeNode"
+          $beforeTrue = (Get-Command true -ErrorAction SilentlyContinue).Source
+          Write-Host "node  before strip: $beforeNode"
+          Write-Host "true  before strip: $beforeTrue"
           $sep = [IO.Path]::PathSeparator
           $kept = @()
           foreach ($p in ($env:PATH -split [regex]::Escape($sep))) {
             if (-not $p) { continue }
-            $isNodeDir = $false
+            $drop = $false
             try {
-              if (Test-Path (Join-Path $p 'node.exe')) { $isNodeDir = $true }
-              if (Test-Path (Join-Path $p 'npm.cmd'))  { $isNodeDir = $true }
+              if (Test-Path (Join-Path $p 'node.exe')) { $drop = $true }
+              if (Test-Path (Join-Path $p 'npm.cmd'))  { $drop = $true }
+              if (Test-Path (Join-Path $p 'true.exe')) { $drop = $true }
+              if (Test-Path (Join-Path $p 'sh.exe'))   { $drop = $true }
             } catch {}
-            if ($isNodeDir) {
+            if ($drop) {
               Write-Host "  drop: $p"
             } else {
               $kept += $p
@@ -550,9 +562,14 @@ jobs:
           }
           $env:PATH = ($kept -join $sep)
           $afterNode = (Get-Command node -ErrorAction SilentlyContinue).Source
-          Write-Host "node after  strip: $afterNode  (expected: empty)"
+          $afterTrue = (Get-Command true -ErrorAction SilentlyContinue).Source
+          Write-Host "node  after  strip: $afterNode  (expected: empty)"
+          Write-Host "true  after  strip: $afterTrue  (expected: empty)"
           if ($afterNode) {
             throw "PATH strip failed: node still resolvable at $afterNode"
+          }
+          if ($afterTrue) {
+            throw "PATH strip failed: true.exe still resolvable at $afterTrue"
           }
 
           $exe = "${{ steps.install-path.outputs.exe }}"
