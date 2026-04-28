@@ -26,6 +26,30 @@
  *     PowerShell assertions)
  */
 import { expect, test } from './fixtures/electron';
+import type { Page } from '@playwright/test';
+
+/**
+ * Land on main-layout, skipping the setup wizard if it appears.
+ *
+ * After the first test in this file finishes setup, the runtime is
+ * marked configured on the *real* runner home dir (we deliberately
+ * don't override HOME for installedExe mode — sharing the runtime
+ * install across tests is what avoids re-running the slow first-launch
+ * npm install for every spec).  That means tests 2/3/4 launch directly
+ * into the main layout with no wizard.  Either path is valid; this
+ * helper handles both.
+ */
+async function reachMainLayout(page: Page): Promise<void> {
+  const setup = page.getByTestId('setup-page');
+  const main = page.getByTestId('main-layout');
+  // First-launch path: wait for either the wizard or the main layout
+  // to render — whichever wins, drive forward to main-layout.
+  await expect(setup.or(main)).toBeVisible({ timeout: 6 * 60 * 1000 });
+  if (await setup.isVisible()) {
+    await page.getByTestId('setup-skip-button').click();
+  }
+  await expect(main).toBeVisible();
+}
 
 type E2EBridge = {
   openclawStatus: {
@@ -52,9 +76,8 @@ test.describe('Install smoke (packaged binary)', () => {
 
   test('packaged binary: wizard → main layout → status panel reports runtime ready', async ({ page }) => {
     // Phase 1: setup wizard appears after first-launch runtime init
-    await expect(page.getByTestId('setup-page')).toBeVisible({ timeout: 6 * 60 * 1000 });
-    await page.getByTestId('setup-skip-button').click();
-    await expect(page.getByTestId('main-layout')).toBeVisible();
+    // (or main-layout direct on a re-launch into a configured runtime).
+    await reachMainLayout(page);
 
     // Phase 2: navigate to Settings, status panel renders
     await page.getByTestId('sidebar-nav-settings').click();
@@ -71,9 +94,7 @@ test.describe('Install smoke (packaged binary)', () => {
   });
 
   test('packaged binary: openclaw runtime install marker present and version readable', async ({ electronApp, page }) => {
-    await expect(page.getByTestId('setup-page')).toBeVisible({ timeout: 6 * 60 * 1000 });
-    await page.getByTestId('setup-skip-button').click();
-    await expect(page.getByTestId('main-layout')).toBeVisible();
+    await reachMainLayout(page);
 
     const snapshot = await electronApp.evaluate(() => {
       const bridge = (globalThis as { __myclawE2E?: E2EBridge }).__myclawE2E!;
@@ -91,9 +112,7 @@ test.describe('Install smoke (packaged binary)', () => {
     // landed bytes in ~/.myclaw/runtime/node_modules — i.e. openclaw's
     // OAuth flows have a local oauth2.js to grep against, so the Apple
     // OAuth failure mode this release fixes is genuinely repaired.
-    await expect(page.getByTestId('setup-page')).toBeVisible({ timeout: 6 * 60 * 1000 });
-    await page.getByTestId('setup-skip-button').click();
-    await expect(page.getByTestId('main-layout')).toBeVisible();
+    await reachMainLayout(page);
 
     const snapshot = await electronApp.evaluate(() => {
       const bridge = (globalThis as { __myclawE2E?: E2EBridge }).__myclawE2E!;
@@ -106,9 +125,7 @@ test.describe('Install smoke (packaged binary)', () => {
   });
 
   test('packaged binary: openclaw auth-runner contract — cancel is idempotent and never throws', async ({ electronApp, page }) => {
-    await expect(page.getByTestId('setup-page')).toBeVisible({ timeout: 6 * 60 * 1000 });
-    await page.getByTestId('setup-skip-button').click();
-    await expect(page.getByTestId('main-layout')).toBeVisible();
+    await reachMainLayout(page);
 
     // Cancelling with no active flow must resolve cleanly.  This is the
     // dashboard contract: UI can always cancel without checking state.
