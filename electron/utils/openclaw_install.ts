@@ -14,7 +14,7 @@
  * package.json — one MyClaw release == one openclaw version.
  */
 import { spawn } from 'child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { delimiter, dirname, join } from 'path';
 
@@ -114,12 +114,72 @@ export function read_preinstalled_plugins(app_path: string): Record<string, stri
  */
 export function read_installed_openclaw_version(runtime_dir: string): string | null {
   const pkg_path = join(runtime_dir, 'node_modules', 'openclaw', 'package.json');
+  let pkg_version: string | null = null;
   try {
     const pkg: PartialPackageJson = JSON.parse(readFileSync(pkg_path, 'utf8'));
-    return typeof pkg.version === 'string' ? pkg.version : null;
+    pkg_version = typeof pkg.version === 'string' ? pkg.version : null;
   } catch {
     return null;
   }
+  if (pkg_version === null) return null;
+
+  // The install-complete marker proves the FULL two-pass install
+  // (openclaw + native deps + plugins) finished without throwing.  An
+  // openclaw/package.json with the right version but no marker means
+  // the install crashed midway — typically a postinstall or a Windows
+  // EPERM/EBUSY rmdir during npm cleanup — leaving a node_modules tree
+  // that is missing transitive deps even though openclaw's own files
+  // got extracted.  Real-world break: v1.6.2 install on a clean
+  // Windows box failed in qqbot's bash-only postinstall, but openclaw
+  // and its outermost deps were already on disk.  v1.6.3 on the same
+  // box saw `current=2026.4.22` and skipped reinstall, then the
+  // gateway crashed with `Cannot find package 'tslog' imported from
+  // …openclaw\dist\logger-…js`.  Treat marker-missing as "not
+  // installed" so the next launch reinstalls cleanly.
+  const marker = read_install_marker(runtime_dir);
+  if (marker === null || marker.version !== pkg_version) return null;
+
+  return pkg_version;
+}
+
+interface InstallMarker {
+  version: string;
+}
+
+function get_install_marker_path(runtime_dir: string): string {
+  return join(runtime_dir, '.myclaw-install-complete');
+}
+
+function read_install_marker(runtime_dir: string): InstallMarker | null {
+  try {
+    const raw = readFileSync(get_install_marker_path(runtime_dir), 'utf-8');
+    const parsed = JSON.parse(raw) as Partial<InstallMarker>;
+    return typeof parsed.version === 'string' ? { version: parsed.version } : null;
+  } catch {
+    return null;
+  }
+}
+
+function write_install_marker(runtime_dir: string, version: string): void {
+  writeFileSync(
+    get_install_marker_path(runtime_dir),
+    JSON.stringify({ version, completed_at: new Date().toISOString() }, null, 2),
+    'utf-8',
+  );
+}
+
+function wipe_runtime_node_modules(runtime_dir: string): void {
+  rmSync(join(runtime_dir, 'node_modules'), {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 200,
+  });
+  rmSync(get_install_marker_path(runtime_dir), { force: true });
+  // Also wipe the package.json we synthesise between passes — leaving
+  // a stale one would confuse a future install pass.
+  rmSync(join(runtime_dir, 'package.json'), { force: true });
+  rmSync(join(runtime_dir, 'package-lock.json'), { force: true });
 }
 
 /**
@@ -348,70 +408,110 @@ export async function ensure_myclaw_runtime_installed(
 
   mkdirSync(state.runtime_dir, { recursive: true });
 
-  // Two-pass install.  Pass 1 brings in openclaw + its native deps
-  // (sharp, koffi, protobufjs, ...) with all lifecycle scripts enabled
-  // — openclaw's own postinstall is what installs each bundled plugin's
-  // runtime deps inside dist/extensions/*/node_modules/, and sharp /
-  // koffi need their `install` scripts to fetch platform-specific
-  // prebuilds.
-  await run_npm_install({
-    node_binary,
-    npm_cli,
-    package_specs: [`openclaw@${state.configured_version}`],
-    prefix: state.runtime_dir,
-    on_log,
-    extra_args: extra_npm_args,
-  });
+  // If a previous install left the runtime in a broken half-written
+  // state (openclaw extracted but no install-complete marker — see
+  // read_installed_openclaw_version for the v1.6.2/1.6.3 incident),
+  // wipe node_modules first so this install starts fresh.  Without
+  // this, npm tries to reconcile against the stale tree and either
+  // keeps the gaps or hits EBUSY/EPERM on the same locked dirs that
+  // broke the previous attempt.
+  const had_partial_install =
+    existsSync(join(state.runtime_dir, 'node_modules', 'openclaw', 'package.json')) &&
+    read_install_marker(state.runtime_dir) === null;
+  if (had_partial_install) {
+    on_log?.('detected previous incomplete install, wiping node_modules for a fresh start…');
+    try {
+      wipe_runtime_node_modules(state.runtime_dir);
+    } catch (err) {
+      on_log?.(`wipe failed (continuing anyway): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
-  // Pass 2 brings in the messaging-platform plugins listed in
-  // package.json's available_backends.openclaw.preinstalled_plugins
-  // WITHOUT lifecycle scripts.  Reason: at least one of them ships a
-  // postinstall using bash-only syntax (`2>/dev/null || true`) that
-  // cmd.exe can't parse, breaking install on Windows boxes that lack
-  // a MSYS2 / Git Bash `true.exe` on PATH.  The `|| true` author-intent
-  // is "best-effort, ignore failures", which `--ignore-scripts` honours
-  // exactly.  None of the plugins we ship needs install-time scripts
-  // to function at runtime — they're pure-JS messaging adapters whose
-  // SDK linking happens lazily.  CI smoke didn't catch this on the
-  // first try because GitHub Windows runners include Git Bash →
-  // `true.exe` resolves and the `|| true` clause masks the failure
-  // (see 24944324317-vs-25008776136 logs).
-  const plugins = read_preinstalled_plugins(app_path);
-  const plugin_specs = Object.entries(plugins).map(
-    ([name, version]) => `${name}@${version}`,
-  );
-  if (plugin_specs.length > 0) {
-    // Write a package.json declaring openclaw + every plugin as top
-    // level deps before pass 2.  Without this, `npm install <plugins>
-    // --no-save` in pass 2 sees only the plugin specs on the CLI, no
-    // mention of openclaw in package.json, and reconciles node_modules
-    // by PRUNING openclaw + its 446 transitive deps as "no longer
-    // needed" (smoke run 25040414306 added 25, removed 447 — exactly
-    // openclaw and friends getting wiped).  Listing everything in
-    // dependencies tells npm "keep these" so reconcile is a no-op for
-    // openclaw's tree.
-    const manifest = {
-      name: 'myclaw-runtime',
-      private: true,
-      dependencies: {
-        openclaw: state.configured_version,
-        ...plugins,
-      },
-    };
-    writeFileSync(
-      join(state.runtime_dir, 'package.json'),
-      JSON.stringify(manifest, null, 2),
-      'utf-8',
-    );
-
+  try {
+    // Two-pass install.  Pass 1 brings in openclaw + its native deps
+    // (sharp, koffi, protobufjs, ...) with all lifecycle scripts enabled
+    // — openclaw's own postinstall is what installs each bundled plugin's
+    // runtime deps inside dist/extensions/*/node_modules/, and sharp /
+    // koffi need their `install` scripts to fetch platform-specific
+    // prebuilds.
     await run_npm_install({
       node_binary,
       npm_cli,
-      package_specs: plugin_specs,
+      package_specs: [`openclaw@${state.configured_version}`],
       prefix: state.runtime_dir,
       on_log,
-      extra_args: [...extra_npm_args, '--ignore-scripts'],
+      extra_args: extra_npm_args,
     });
+
+    // Pass 2 brings in the messaging-platform plugins listed in
+    // package.json's available_backends.openclaw.preinstalled_plugins
+    // WITHOUT lifecycle scripts.  Reason: at least one of them ships a
+    // postinstall using bash-only syntax (`2>/dev/null || true`) that
+    // cmd.exe can't parse, breaking install on Windows boxes that lack
+    // a MSYS2 / Git Bash `true.exe` on PATH.  The `|| true` author-intent
+    // is "best-effort, ignore failures", which `--ignore-scripts` honours
+    // exactly.  None of the plugins we ship needs install-time scripts
+    // to function at runtime — they're pure-JS messaging adapters whose
+    // SDK linking happens lazily.  CI smoke didn't catch this on the
+    // first try because GitHub Windows runners include Git Bash →
+    // `true.exe` resolves and the `|| true` clause masks the failure
+    // (see 24944324317-vs-25008776136 logs).
+    const plugins = read_preinstalled_plugins(app_path);
+    const plugin_specs = Object.entries(plugins).map(
+      ([name, version]) => `${name}@${version}`,
+    );
+    if (plugin_specs.length > 0) {
+      // Write a package.json declaring openclaw + every plugin as top
+      // level deps before pass 2.  Without this, `npm install <plugins>
+      // --no-save` in pass 2 sees only the plugin specs on the CLI, no
+      // mention of openclaw in package.json, and reconciles node_modules
+      // by PRUNING openclaw + its 446 transitive deps as "no longer
+      // needed" (smoke run 25040414306 added 25, removed 447 — exactly
+      // openclaw and friends getting wiped).  Listing everything in
+      // dependencies tells npm "keep these" so reconcile is a no-op for
+      // openclaw's tree.
+      const manifest = {
+        name: 'myclaw-runtime',
+        private: true,
+        dependencies: {
+          openclaw: state.configured_version,
+          ...plugins,
+        },
+      };
+      writeFileSync(
+        join(state.runtime_dir, 'package.json'),
+        JSON.stringify(manifest, null, 2),
+        'utf-8',
+      );
+
+      await run_npm_install({
+        node_binary,
+        npm_cli,
+        package_specs: plugin_specs,
+        prefix: state.runtime_dir,
+        on_log,
+        extra_args: [...extra_npm_args, '--ignore-scripts'],
+      });
+    }
+
+    // Both passes succeeded.  Mark the install complete so the next
+    // launch's read_installed_openclaw_version trusts this tree.
+    write_install_marker(state.runtime_dir, state.configured_version);
+  } catch (err) {
+    // Best-effort cleanup so the next launch sees "not installed" and
+    // retries from scratch.  Without this, the package.json from pass
+    // 1 (or any extracted openclaw/package.json) stays on disk and the
+    // partial-install detection above kicks in next time — which is
+    // fine, but explicit cleanup here makes the failure mode cleaner
+    // and helps the very next retry succeed instead of inheriting
+    // whatever state npm left mid-install.
+    on_log?.('install failed; wiping node_modules so next launch reinstalls…');
+    try {
+      wipe_runtime_node_modules(state.runtime_dir);
+    } catch (cleanupErr) {
+      on_log?.(`wipe failed: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
+    }
+    throw err;
   }
 
   return { version: state.configured_version, was_installed: true };
