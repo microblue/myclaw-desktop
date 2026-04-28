@@ -56,11 +56,20 @@ async function launchMyClawElectron(homeDir: string, userDataDir: string): Promi
     // default (%APPDATA%/myclaw-desktop/) so install-smoke's "Capture
     // diagnostics" step can still find the log file.  Runner is
     // ephemeral; state leakage into APPDATA is fine.
+    // Linux GitHub-hosted runners can't use the Chromium SUID sandbox
+    // (chrome-sandbox isn't owned by root with mode 4755 on the extracted
+    // AppImage), so disable it.  Same trick the dev-mode path uses below
+    // and what the workflow's preceding "Smoke launch" step does via
+    // --no-sandbox.  No-op on macOS/Windows.
+    const installedSandboxEnv = process.platform === 'linux'
+      ? { ELECTRON_DISABLE_SANDBOX: '1' }
+      : {};
     return await electron.launch({
       executablePath: installedExe,
-      args: [],
+      args: process.platform === 'linux' ? ['--no-sandbox'] : [],
       env: {
         ...process.env,
+        ...installedSandboxEnv,
         MYCLAW_E2E: '1',
         MYCLAW_PORT_MYCLAW_HOST_API: String(hostApiPort),
         ...(process.env.OPENROUTER_TEST_API_KEY
