@@ -114,24 +114,13 @@ jobs:
           test -f "$HOME/.openclaw/canary.txt" || { echo "canary lost!"; exit 1; }
           echo "Canary OK"
 
-      - name: Smoke launch — verify binary boots
-        run: |
-          exe="${{ steps.extract.outputs.exe }}"
-          # Quick liveness check under xvfb.  If process dies in 10s the
-          # log captures the reason.
-          xvfb-run -a "$exe" --no-sandbox >/tmp/myclaw-launch.log 2>&1 &
-          pid=$!
-          sleep 10
-          if ! ps -p $pid >/dev/null; then
-            echo "Process died early; log:"
-            cat /tmp/myclaw-launch.log || true
-            exit 1
-          fi
-          echo "Process alive after 10s (pid=$pid), terminating for Playwright phase"
-          kill -TERM $pid || true
-          # Don't fail the wait — Electron's signal handling sometimes
-          # exits non-zero on SIGTERM.
-          wait $pid 2>/dev/null || true
+      # NB: previously a "Smoke launch" pre-check launched the binary,
+      # slept 10s, then killed it.  That left ~/.myclaw/runtime/ in a
+      # half-installed state (npm install was killed mid-flight) which
+      # the next launch had to recover from inside the 6-min Playwright
+      # wait — racing the clock.  Playwright launches the binary itself
+      # and waits for the main window properly, so the pre-check is
+      # redundant.
 
       - name: Run install-smoke E2E against extracted AppImage
         env:

@@ -110,23 +110,12 @@ jobs:
           test -f "$HOME/.openclaw/canary.txt" || { echo "canary lost!"; exit 1; }
           echo "Canary OK"
 
-      - name: Smoke launch — verify binary runs
-        run: |
-          exe="${{ steps.mount.outputs.exe }}"
-          # Quick liveness check — launch in background, give it 30s to
-          # show its windowed UI bootstrapping, then kill.  The Playwright
-          # phase below does the deeper validation.
-          nohup "$exe" --no-sandbox >/tmp/myclaw-launch.log 2>&1 &
-          pid=$!
-          sleep 10
-          if ! ps -p $pid >/dev/null; then
-            echo "Process died early; log:"
-            cat /tmp/myclaw-launch.log || true
-            exit 1
-          fi
-          echo "Process alive after 10s (pid=$pid), terminating for Playwright phase"
-          kill -TERM $pid || true
-          wait $pid 2>/dev/null || true
+      # NB: previously a "Smoke launch" pre-check launched the binary,
+      # slept 10s, then killed it.  That hung on macOS (MyClaw doesn't
+      # exit cleanly mid-install) and left the runtime in a partially-
+      # installed state on Linux.  Playwright launches the binary
+      # itself in the next step and waits for the main window properly,
+      # so the pre-check is redundant.
 
       - name: Run install-smoke E2E against installed .app
         env:

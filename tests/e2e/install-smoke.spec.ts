@@ -44,7 +44,10 @@ async function reachMainLayout(page: Page): Promise<void> {
   const main = page.getByTestId('main-layout');
   // First-launch path: wait for either the wizard or the main layout
   // to render — whichever wins, drive forward to main-layout.
-  await expect(setup.or(main)).toBeVisible({ timeout: 6 * 60 * 1000 });
+  // 9-min budget covers a worst-case cold first-launch on a slow runner
+  // (Linux GH-hosted: ~5-6m npm install + ~30s gateway boot).  Test-level
+  // setTimeout (10m) caps the full run.
+  await expect(setup.or(main)).toBeVisible({ timeout: 9 * 60 * 1000 });
   if (await setup.isVisible()) {
     await page.getByTestId('setup-skip-button').click();
   }
@@ -71,8 +74,16 @@ test.describe('Install smoke (packaged binary)', () => {
   );
 
   // Generous timeout: first-launch openclaw runtime npm install can take
-  // 60-180s depending on platform + network + AV scanners.
-  test.setTimeout(10 * 60 * 1000);
+  // up to ~6m on Linux GH runners.  reachMainLayout waits 9m; this caps
+  // the full test (including post-launch assertions) at 12m.
+  test.setTimeout(12 * 60 * 1000);
+
+  // Disable Playwright's default 2-retry policy for this spec.  Each retry
+  // would burn another ~9-min runtime-init wait, easily blowing the 45-min
+  // job budget.  Install-smoke failures are not transient — if test 1
+  // fails because the runtime didn't come up, retrying won't help; we
+  // want the artifacts uploaded immediately.
+  test.describe.configure({ retries: 0 });
 
   test('packaged binary: wizard → main layout → status panel reports runtime ready', async ({ page }) => {
     // Phase 1: setup wizard appears after first-launch runtime init
