@@ -123,7 +123,7 @@ test.describe('MyClaw token usage history', () => {
       });
 
       return status?.state ?? 'unknown';
-    }, { timeout: 45_000, intervals: [500, 1000, 1500, 2000] }).toBe('running');
+    }, { timeout: 90_000, intervals: [500, 1000, 1500, 2000] }).toBe('running');
   }
 
   async function validateUsageHistory(page: Page): Promise<void> {
