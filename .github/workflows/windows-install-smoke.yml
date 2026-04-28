@@ -11,6 +11,8 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - '.github/workflows/windows-install-smoke.yml'
+      - 'tests/e2e/install-smoke.spec.ts'
+      - 'tests/e2e/fixtures/**'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
