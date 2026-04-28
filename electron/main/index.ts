@@ -336,6 +336,7 @@ async function initialize(): Promise<void> {
       if (state.needs_install) {
         logger.info('[myclaw-runtime] initializing your MyClaw runtime...');
         progress = show_runtime_progress_window();
+        progress.set_stage('Installing dependencies (this takes a couple of minutes)…');
 
         const install_start = Date.now();
         const install_result = await ensure_myclaw_runtime_installed({
@@ -362,6 +363,7 @@ async function initialize(): Promise<void> {
       // undocumented and hangs on undetected required prompts.
       // MyClaw's UI wizard + sync* functions fill in providers /
       // channels / auth later.
+      progress?.set_stage('Configuring openclaw…');
       const onboard_result = await ensure_openclaw_onboarded({
         on_log: (line) => {
           logger.info(`[myclaw-runtime] [onboard] ${line}`);

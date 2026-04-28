@@ -12,36 +12,48 @@
       color: #e8e8ef;
       display: flex;
       flex-direction: column;
-      padding: 32px 36px;
+      padding: 28px 32px 24px 32px;
       user-select: none;
       -webkit-user-select: none;
     }
-    .header {
-      display: flex; align-items: center; gap: 14px;
-      margin-bottom: 20px;
-    }
-    .spinner {
-      width: 22px; height: 22px; flex-shrink: 0;
-      border: 2.5px solid rgba(255, 255, 255, 0.12);
-      border-top-color: #6a8dff;
-      border-radius: 50%;
-      animation: spin 0.85s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
     h1 {
       font-size: 15px; font-weight: 600; letter-spacing: 0.02em;
-      margin: 0;
+      margin: 0 0 6px 0;
     }
     .subtitle {
       font-size: 12px; color: #8e8fa2;
-      margin: 0 0 16px 0; line-height: 1.5;
+      margin: 0; line-height: 1.5;
+    }
+    .progress {
+      position: relative;
+      width: 100%; height: 6px;
+      margin: 18px 0 14px 0;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .progress-bar {
+      position: absolute; top: 0; left: 0; bottom: 0;
+      width: 35%;
+      background: linear-gradient(90deg, #6a8dff 0%, #9b6aff 100%);
+      border-radius: 3px;
+      animation: slide 1.6s ease-in-out infinite;
+    }
+    @keyframes slide {
+      0%   { left: -35%; }
+      100% { left: 100%; }
+    }
+    .stage {
+      font-size: 11.5px; color: #b0b3c5;
+      margin: 0 0 10px 0; line-height: 1.4;
+      min-height: 16px;
     }
     #log {
       flex: 1; min-height: 0;
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 10.5px; line-height: 1.45;
       color: #7a7d90;
-      background: rgba(0, 0, 0, 0.28);
+      background: rgba(0, 0, 0, 0.32);
       border: 1px solid rgba(255, 255, 255, 0.04);
       border-radius: 6px;
       padding: 12px 14px;
@@ -57,11 +69,10 @@
   </style>
 </head>
 <body>
-  <div class="header">
-    <div class="spinner"></div>
-    <h1>Initializing your MyClaw runtime</h1>
-  </div>
+  <h1>Initializing your MyClaw runtime</h1>
   <p class="subtitle">First launch can take up to a minute. Please keep the window open.</p>
+  <div class="progress" aria-label="initializing"><div class="progress-bar"></div></div>
+  <p class="stage" id="stage">Preparing…</p>
   <pre id="log"></pre>
 </body>
 </html>

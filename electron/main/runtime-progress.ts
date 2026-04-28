@@ -15,13 +15,14 @@ import { getResourcesDir } from '../utils/paths';
 
 export interface RuntimeProgressWindow {
   append_log: (line: string) => void;
+  set_stage: (label: string) => void;
   close: () => void;
 }
 
 export function show_runtime_progress_window(): RuntimeProgressWindow {
   const win = new BrowserWindow({
-    width: 520,
-    height: 340,
+    width: 540,
+    height: 440,
     resizable: false,
     minimizable: true,
     maximizable: false,
@@ -57,6 +58,18 @@ export function show_runtime_progress_window(): RuntimeProgressWindow {
           : win.webContents.executeJavaScript(
               `{const l=document.getElementById('log');` +
               `if(l){l.textContent+=${payload};l.scrollTop=l.scrollHeight;}}`,
+              true,
+            ).catch(() => { /* window may be closing */ }),
+      );
+    },
+    set_stage: (label) => {
+      if (win.isDestroyed()) return;
+      const payload = JSON.stringify(label);
+      last_append = last_append.then(() =>
+        win.isDestroyed()
+          ? undefined
+          : win.webContents.executeJavaScript(
+              `{const s=document.getElementById('stage');if(s){s.textContent=${payload};}}`,
               true,
             ).catch(() => { /* window may be closing */ }),
       );
