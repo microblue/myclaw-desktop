@@ -56,9 +56,18 @@ jobs:
       - name: Locate AppImage
         id: locate
         run: |
-          appimage=$(find release -maxdepth 2 -name "MyClaw.One-*.AppImage" -type f | head -n 1)
+          # electron-builder produces both x64 + arm64 AppImages; pick the
+          # one matching the runner's arch so we don't try to launch an
+          # incompatible binary.  Resolve to absolute path — later steps
+          # cd into a tempdir before invoking.
+          case "$(uname -m)" in
+            x86_64) arch_pattern="*linux-x64*";;
+            aarch64|arm64) arch_pattern="*linux-arm64*";;
+            *) echo "Unsupported runner arch: $(uname -m)"; exit 1;;
+          esac
+          appimage=$(find "$PWD/release" -maxdepth 2 -name "MyClaw.One-${arch_pattern}.AppImage" -type f | head -n 1)
           if [ -z "$appimage" ]; then
-            echo "AppImage not found under release/"
+            echo "AppImage not found under release/ for arch $(uname -m)"
             ls -la release || true
             exit 1
           fi
