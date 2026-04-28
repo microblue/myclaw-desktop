@@ -18,6 +18,20 @@ export interface DesktopRelease {
 
 const DESKTOP_RELEASES: DesktopRelease[] = [
     {
+        version: '1.6.3',
+        date: '2026-04-28',
+        changes: [
+            {
+                kind: 'fix',
+                text: 'Fixed runtime install on clean Windows boxes without Git Bash on PATH (plugin postinstall scripts using bash-only `2>/dev/null || true` syntax now skipped via two-pass install with --ignore-scripts).'
+            },
+            {
+                kind: 'fix',
+                text: 'Fixed npm pruning openclaw + 446 transitive deps during plugin install pass; runtime now writes a manifest declaring all top-level deps before the second install pass.'
+            }
+        ]
+    },
+    {
         version: '1.6.2',
         date: '2026-04-28',
         changes: [
