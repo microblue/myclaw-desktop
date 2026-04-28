@@ -372,15 +372,38 @@ export async function ensure_myclaw_runtime_installed(
   // is "best-effort, ignore failures", which `--ignore-scripts` honours
   // exactly.  None of the plugins we ship needs install-time scripts
   // to function at runtime — they're pure-JS messaging adapters whose
-  // SDK linking happens lazily.  CI smoke didn't catch this because
-  // GitHub Windows runners include Git Bash → `true.exe` resolves and
-  // the `|| true` clause masks the failure (see
-  // 24944324317-vs-25008776136 logs).
+  // SDK linking happens lazily.  CI smoke didn't catch this on the
+  // first try because GitHub Windows runners include Git Bash →
+  // `true.exe` resolves and the `|| true` clause masks the failure
+  // (see 24944324317-vs-25008776136 logs).
   const plugins = read_preinstalled_plugins(app_path);
   const plugin_specs = Object.entries(plugins).map(
     ([name, version]) => `${name}@${version}`,
   );
   if (plugin_specs.length > 0) {
+    // Write a package.json declaring openclaw + every plugin as top
+    // level deps before pass 2.  Without this, `npm install <plugins>
+    // --no-save` in pass 2 sees only the plugin specs on the CLI, no
+    // mention of openclaw in package.json, and reconciles node_modules
+    // by PRUNING openclaw + its 446 transitive deps as "no longer
+    // needed" (smoke run 25040414306 added 25, removed 447 — exactly
+    // openclaw and friends getting wiped).  Listing everything in
+    // dependencies tells npm "keep these" so reconcile is a no-op for
+    // openclaw's tree.
+    const manifest = {
+      name: 'myclaw-runtime',
+      private: true,
+      dependencies: {
+        openclaw: state.configured_version,
+        ...plugins,
+      },
+    };
+    writeFileSync(
+      join(state.runtime_dir, 'package.json'),
+      JSON.stringify(manifest, null, 2),
+      'utf-8',
+    );
+
     await run_npm_install({
       node_binary,
       npm_cli,
