@@ -18,6 +18,20 @@ export interface DesktopRelease {
 
 const DESKTOP_RELEASES: DesktopRelease[] = [
     {
+        version: '1.6.2',
+        date: '2026-04-28',
+        changes: [
+            {
+                kind: 'fix',
+                text: 'Fixed runtime install crash on Windows machines without a global Node.js installation (preinstall script could not find \'node\' on PATH).'
+            },
+            {
+                kind: 'highlight',
+                text: 'Initialization splash now shows a progress bar with a live stage label and scrolling install log, so first-launch progress is visible at a glance.'
+            }
+        ]
+    },
+    {
         version: '1.6.1',
         date: '2026-04-28',
         changes: [
