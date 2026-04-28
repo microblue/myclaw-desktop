@@ -18,6 +18,16 @@ export interface DesktopRelease {
 
 const DESKTOP_RELEASES: DesktopRelease[] = [
     {
+        version: '1.6.4',
+        date: '2026-04-28',
+        changes: [
+            {
+                kind: 'fix',
+                text: 'Self-heals broken installs from v1.6.2/1.6.3: an install-complete marker is now written only after both install passes succeed; missing/mismatched marker on launch triggers a clean reinstall instead of starting a half-broken runtime that crashed the gateway with module-not-found errors.'
+            }
+        ]
+    },
+    {
         version: '1.6.3',
         date: '2026-04-28',
         changes: [
