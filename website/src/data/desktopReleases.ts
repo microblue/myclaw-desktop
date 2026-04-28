@@ -18,6 +18,20 @@ export interface DesktopRelease {
 
 const DESKTOP_RELEASES: DesktopRelease[] = [
     {
+        version: '1.6.1',
+        date: '2026-04-28',
+        changes: [
+            {
+                kind: 'fix',
+                text: 'Fixed a crash on first launch on Windows where the app would silently exit after installing the runtime, before the gateway could start.'
+            },
+            {
+                kind: 'fix',
+                text: 'Hardened main-process startup with crash handlers so any future top-level errors surface cleanly instead of leaving the app idle.'
+            }
+        ]
+    },
+    {
         version: '1.6.0',
         date: '2026-04-24',
         changes: [

@@ -1,6 +1,6 @@
 {
     "name": "myclaw-desktop",
-    "version": "1.6.0",
+    "version": "1.6.1",
     "default_backend": "openclaw",
     "available_backends": {
         "openclaw": {
