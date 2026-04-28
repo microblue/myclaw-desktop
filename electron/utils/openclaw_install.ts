@@ -16,7 +16,7 @@
 import { spawn } from 'child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
-import { join } from 'path';
+import { delimiter, dirname, join } from 'path';
 
 export interface TestedCompatibleRange {
   /** Lowest openclaw version MyClaw has been exercised against. */
@@ -467,9 +467,19 @@ function run_npm_install(spec: NpmInstallSpec): Promise<void> {
       ...(spec.extra_args ?? []),
     ];
 
+    // Prepend the bundled node's directory to PATH so any lifecycle
+    // script npm runs (preinstall / postinstall) that shells out via
+    // `cmd.exe /d /s /c node ...` finds OUR node, not the system's.
+    // On a clean Windows box without a global Node install, the
+    // openclaw package's preinstall script otherwise fails with
+    // "'node' is not recognized as an internal or external command".
+    // CI didn't catch this because GitHub runners ship Node on PATH.
+    const node_dir = dirname(spec.node_binary);
+    const augmented_path = `${node_dir}${delimiter}${process.env.PATH ?? ''}`;
+
     const child = spawn(spec.node_binary, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, NODE_ENV: 'production' },
+      env: { ...process.env, NODE_ENV: 'production', PATH: augmented_path },
     });
 
     const pipe_lines = (chunk: Buffer) => {

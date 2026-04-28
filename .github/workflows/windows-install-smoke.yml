@@ -518,6 +518,43 @@ jobs:
       - name: Launch MyClaw + wait for gateway 18789 + HTTP probe
         shell: pwsh
         run: |
+          # Strip the runner's pre-installed Node.js from PATH for this
+          # step.  The runner image ships node + npm globally, which is
+          # exactly the environment that masked the v1.6.1-fixed bug:
+          # when MyClaw spawned `bundled_node bundled_npm install
+          # openclaw@…`, npm's lifecycle scripts shelled out via
+          # `cmd.exe /d /s /c node scripts/preinstall-…`, and cmd.exe
+          # found the runner's global node — making us look correct
+          # while a clean Windows box (no global node) failed with
+          # "'node' is not recognized".  Removing system node from PATH
+          # forces the bundled-node directory we now prepend in
+          # openclaw_install.ts:run_npm_install() to be the only viable
+          # node, so a regression of that augmentation surfaces here.
+          Write-Host "=== Stripping global Node.js from PATH ==="
+          $beforeNode = (Get-Command node -ErrorAction SilentlyContinue).Source
+          Write-Host "node before strip: $beforeNode"
+          $sep = [IO.Path]::PathSeparator
+          $kept = @()
+          foreach ($p in ($env:PATH -split [regex]::Escape($sep))) {
+            if (-not $p) { continue }
+            $isNodeDir = $false
+            try {
+              if (Test-Path (Join-Path $p 'node.exe')) { $isNodeDir = $true }
+              if (Test-Path (Join-Path $p 'npm.cmd'))  { $isNodeDir = $true }
+            } catch {}
+            if ($isNodeDir) {
+              Write-Host "  drop: $p"
+            } else {
+              $kept += $p
+            }
+          }
+          $env:PATH = ($kept -join $sep)
+          $afterNode = (Get-Command node -ErrorAction SilentlyContinue).Source
+          Write-Host "node after  strip: $afterNode  (expected: empty)"
+          if ($afterNode) {
+            throw "PATH strip failed: node still resolvable at $afterNode"
+          }
+
           $exe = "${{ steps.install-path.outputs.exe }}"
 
           # Launch MyClaw via cmd.exe with stderr redirected to a file.
