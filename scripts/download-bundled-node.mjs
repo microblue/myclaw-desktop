@@ -1,16 +1,22 @@
 #!/usr/bin/env zx
 
-// Downloads Node.js + npm for Windows targets and unpacks them into
-// resources/bin/<platform>-<arch>/.  The packaged MyClaw installer carries
-// this tree so that first-run runtime install can run
+// Downloads Node.js + npm for win/mac/linux targets and unpacks them
+// into resources/bin/<platform>-<arch>/.  The packaged MyClaw installer
+// carries this tree so that first-run runtime install can run
 //
 //   <bundled_node> <npm-cli.js> install openclaw@<pin>
 //
 // without depending on the user having Node on their system.
 //
-// Prior versions extracted ONLY node.exe and discarded the rest of the
-// distribution — which left us with no npm.  This script now preserves
-// the full Node archive contents.
+// Prior versions handled only Windows.  Linux/macOS now have parity:
+// the .tar.xz tarball is extracted and its top-level contents (bin/node,
+// lib/node_modules/npm/, etc.) land in resources/bin/<id>/ so that
+// get_bundled_node_path() (electron/utils/openclaw_install.ts) finds
+//   resources/bin/bin/node           on linux/mac
+//   resources/bin/node.exe           on windows
+// and get_bundled_npm_cli_path() finds
+//   resources/bin/lib/node_modules/npm/bin/npm-cli.js   on linux/mac
+//   resources/bin/node_modules/npm/bin/npm-cli.js       on windows
 
 import 'zx/globals';
 
@@ -22,10 +28,12 @@ const NODE_VERSION = '24.0.0';
 const BASE_URL = `https://nodejs.org/dist/v${NODE_VERSION}`;
 const OUTPUT_BASE = path.join(ROOT_DIR, 'resources', 'bin');
 
-// Items a Windows Node.js zip drops at its top level.  We selectively
+// Items a Node.js distribution drops at its top level.  We selectively
 // remove these before extraction so that siblings placed by other scripts
-// (uv.exe from download-bundled-uv.mjs, etc.) survive.
+// (uv binaries from download-bundled-uv.mjs, etc.) survive.  Union of
+// Windows-zip and Unix-tarball top-level entries.
 const NODE_TOP_LEVEL_ITEMS = [
+  // Windows zip layout
   'node.exe',
   'npm', 'npm.cmd', 'npm.ps1',
   'npx', 'npx.cmd', 'npx.ps1',
@@ -33,6 +41,9 @@ const NODE_TOP_LEVEL_ITEMS = [
   'node_modules',
   'nodevars.bat',
   'install_tools.bat',
+  // Unix tarball layout
+  'bin', 'lib', 'include', 'share',
+  // Common metadata files
   'CHANGELOG.md', 'LICENSE', 'README.md',
 ];
 
@@ -40,15 +51,39 @@ const TARGETS = {
   'win32-x64': {
     filename: `node-v${NODE_VERSION}-win-x64.zip`,
     source_dir: `node-v${NODE_VERSION}-win-x64`,
+    archive_kind: 'zip',
   },
   'win32-arm64': {
     filename: `node-v${NODE_VERSION}-win-arm64.zip`,
     source_dir: `node-v${NODE_VERSION}-win-arm64`,
+    archive_kind: 'zip',
+  },
+  'linux-x64': {
+    filename: `node-v${NODE_VERSION}-linux-x64.tar.xz`,
+    source_dir: `node-v${NODE_VERSION}-linux-x64`,
+    archive_kind: 'tar.xz',
+  },
+  'linux-arm64': {
+    filename: `node-v${NODE_VERSION}-linux-arm64.tar.xz`,
+    source_dir: `node-v${NODE_VERSION}-linux-arm64`,
+    archive_kind: 'tar.xz',
+  },
+  'darwin-x64': {
+    filename: `node-v${NODE_VERSION}-darwin-x64.tar.xz`,
+    source_dir: `node-v${NODE_VERSION}-darwin-x64`,
+    archive_kind: 'tar.xz',
+  },
+  'darwin-arm64': {
+    filename: `node-v${NODE_VERSION}-darwin-arm64.tar.xz`,
+    source_dir: `node-v${NODE_VERSION}-darwin-arm64`,
+    archive_kind: 'tar.xz',
   },
 };
 
 const PLATFORM_GROUPS = {
   win: ['win32-x64', 'win32-arm64'],
+  linux: ['linux-x64', 'linux-arm64'],
+  mac: ['darwin-x64', 'darwin-arm64'],
 };
 
 async function setup_target(id) {
@@ -81,13 +116,20 @@ async function setup_target(id) {
     const buffer = await response.arrayBuffer();
     await fs.writeFile(archive_path, Buffer.from(buffer));
 
-    echo`📂 Extracting...`;
-    if (os.platform() === 'win32') {
-      const { execFileSync } = await import('child_process');
-      const ps_command = `Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('${archive_path.replace(/'/g, "''")}', '${temp_dir.replace(/'/g, "''")}')`;
-      execFileSync('powershell.exe', ['-NoProfile', '-Command', ps_command], { stdio: 'inherit' });
+    echo`📂 Extracting (${target.archive_kind})...`;
+    if (target.archive_kind === 'zip') {
+      if (os.platform() === 'win32') {
+        const { execFileSync } = await import('child_process');
+        const ps_command = `Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('${archive_path.replace(/'/g, "''")}', '${temp_dir.replace(/'/g, "''")}')`;
+        execFileSync('powershell.exe', ['-NoProfile', '-Command', ps_command], { stdio: 'inherit' });
+      } else {
+        await $`unzip -q -o ${archive_path} -d ${temp_dir}`;
+      }
+    } else if (target.archive_kind === 'tar.xz') {
+      // tar with xz support — present on macOS/Linux runners by default.
+      await $`tar -xJf ${archive_path} -C ${temp_dir}`;
     } else {
-      await $`unzip -q -o ${archive_path} -d ${temp_dir}`;
+      throw new Error(`Unsupported archive_kind: ${target.archive_kind}`);
     }
 
     const extracted_root = path.join(temp_dir, target.source_dir);
