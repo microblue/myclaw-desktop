@@ -336,7 +336,7 @@ async function initialize(): Promise<void> {
       if (state.needs_install) {
         logger.info('[myclaw-runtime] initializing your MyClaw runtime...');
         progress = show_runtime_progress_window();
-        progress.set_stage('Installing dependencies (this takes a couple of minutes)…');
+        progress.set_stage('Preparing…');
 
         const install_start = Date.now();
         const install_result = await ensure_myclaw_runtime_installed({
@@ -346,6 +346,19 @@ async function initialize(): Promise<void> {
           on_log: (line) => {
             logger.info(`[myclaw-runtime] [npm] ${line}`);
             progress?.append_log(line);
+          },
+          on_progress: (current, total) => {
+            progress?.set_count(current, total);
+          },
+          on_stage: (stage) => {
+            const labels: Record<typeof stage, string> = {
+              'downloading-core': 'Downloading core packages…',
+              'installing-plugins': 'Installing plugins…',
+              'finishing': 'Finalizing install…',
+            };
+            const label = labels[stage];
+            logger.info(`[myclaw-runtime] stage=${stage} (${label})`);
+            progress?.set_stage(label);
           },
         });
         const install_elapsed = ((Date.now() - install_start) / 1000).toFixed(1);

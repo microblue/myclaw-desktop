@@ -14,9 +14,19 @@
  * package.json — one MyClaw release == one openclaw version.
  */
 import { spawn } from 'child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { delimiter, dirname, join } from 'path';
+
+/**
+ * Empirical default for the bar's denominator.  Two-pass install of
+ * openclaw + 5 preinstalled plugins on Windows produces ~500-600
+ * top-level node_modules subdirs.  600 chosen so the bar pegs near
+ * 99% before we flip to "Configuring openclaw…".  Off-by-N is fine —
+ * set_count clamps to 99% so the bar never reads "100% done"
+ * prematurely.
+ */
+const ESTIMATED_RUNTIME_PACKAGE_COUNT = 600;
 
 export interface TestedCompatibleRange {
   /** Lowest openclaw version MyClaw has been exercised against. */
@@ -377,6 +387,20 @@ export interface RuntimeInitOptions {
   resources_path: string;
   platform?: NodeJS.Platform;
   on_log?: (line: string) => void;
+  /**
+   * Called whenever the runtime's node_modules subdir count changes.
+   * Drives the determinate progress bar in the runtime-progress window.
+   * `total` is an empirical estimate (ESTIMATED_RUNTIME_PACKAGE_COUNT);
+   * the actual install may land slightly above or below this.
+   */
+  on_progress?: (current: number, total: number) => void;
+  /**
+   * Called when the install moves from one phase to the next.
+   * Phases: "downloading-core" (npm install openclaw + transitives),
+   * "installing-plugins" (npm install of preinstalled_plugins),
+   * "finishing".
+   */
+  on_stage?: (stage: 'downloading-core' | 'installing-plugins' | 'finishing') => void;
   /** Extra npm flags for tests / special scenarios (e.g. --registry=...). */
   extra_npm_args?: string[];
 }
@@ -395,6 +419,8 @@ export async function ensure_myclaw_runtime_installed(
     resources_path,
     platform = process.platform,
     on_log,
+    on_progress,
+    on_stage,
     extra_npm_args = [],
   } = options;
 
@@ -434,12 +460,14 @@ export async function ensure_myclaw_runtime_installed(
     // runtime deps inside dist/extensions/*/node_modules/, and sharp /
     // koffi need their `install` scripts to fetch platform-specific
     // prebuilds.
+    on_stage?.('downloading-core');
     await run_npm_install({
       node_binary,
       npm_cli,
       package_specs: [`openclaw@${state.configured_version}`],
       prefix: state.runtime_dir,
       on_log,
+      on_progress,
       extra_args: extra_npm_args,
     });
 
@@ -484,18 +512,22 @@ export async function ensure_myclaw_runtime_installed(
         'utf-8',
       );
 
+      on_stage?.('installing-plugins');
       await run_npm_install({
         node_binary,
         npm_cli,
         package_specs: plugin_specs,
         prefix: state.runtime_dir,
         on_log,
+        on_progress,
         extra_args: [...extra_npm_args, '--ignore-scripts'],
       });
     }
 
     // Both passes succeeded.  Mark the install complete so the next
     // launch's read_installed_openclaw_version trusts this tree.
+    on_stage?.('finishing');
+    on_progress?.(ESTIMATED_RUNTIME_PACKAGE_COUNT, ESTIMATED_RUNTIME_PACKAGE_COUNT);
     write_install_marker(state.runtime_dir, state.configured_version);
   } catch (err) {
     // Best-effort cleanup so the next launch sees "not installed" and
@@ -585,11 +617,86 @@ interface NpmInstallSpec {
   package_specs: string[];
   prefix: string;
   on_log?: (line: string) => void;
+  on_progress?: (current: number, total: number) => void;
   extra_args?: string[];
+}
+
+/**
+ * Count packages currently extracted into <prefix>/node_modules/.  Each
+ * top-level subdir = one package; scoped packages (@scope/name) sit
+ * under a `@scope/` parent so we descend one level for those.  Files
+ * (`.package-lock.json`, `.modules.yaml`, etc.) are filtered out.
+ *
+ * Robust to mid-install state: readdir mid-install can transiently see
+ * .partial dirs npm hasn't renamed yet — we ignore dot-prefixed
+ * entries.  If readdir throws (dir doesn't exist yet, permissions
+ * race), we just return the previous count.
+ */
+function count_node_modules_packages(prefix: string): number {
+  const node_modules = join(prefix, 'node_modules');
+  if (!existsSync(node_modules)) return 0;
+  let count = 0;
+  let entries: string[];
+  try {
+    entries = readdirSync(node_modules);
+  } catch {
+    return 0;
+  }
+  for (const entry of entries) {
+    if (entry.startsWith('.')) continue;
+    if (entry.startsWith('@')) {
+      try {
+        const scoped = readdirSync(join(node_modules, entry));
+        for (const s of scoped) {
+          if (!s.startsWith('.')) count++;
+        }
+      } catch {
+        /* scope dir disappeared mid-read; skip */
+      }
+    } else {
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * Start a polling timer that periodically counts packages in
+ * <prefix>/node_modules/ and reports the count via `on_progress`.
+ * Returns a `stop()` function that flushes one final count and
+ * clears the interval.  Caller must call `stop()` whether the
+ * install succeeds or fails.
+ */
+function start_progress_poller(
+  prefix: string,
+  total: number,
+  on_progress: ((current: number, total: number) => void) | undefined,
+): () => void {
+  if (!on_progress) return () => { /* no-op */ };
+  let last_count = -1;
+  const tick = () => {
+    const count = count_node_modules_packages(prefix);
+    if (count !== last_count) {
+      on_progress(count, total);
+      last_count = count;
+    }
+  };
+  // Initial tick so the bar reflects existing dirs from a prior pass.
+  tick();
+  const interval = setInterval(tick, 750);
+  return () => {
+    clearInterval(interval);
+    tick();
+  };
 }
 
 function run_npm_install(spec: NpmInstallSpec): Promise<void> {
   return new Promise((resolve, reject) => {
+    const stop_poller = start_progress_poller(
+      spec.prefix,
+      ESTIMATED_RUNTIME_PACKAGE_COUNT,
+      spec.on_progress,
+    );
     // Flag choices:
     //   --no-save + --package-lock=false : no lockfile churn at runtime
     //   --legacy-peer-deps               : tolerate openclaw's plugin peer
@@ -639,8 +746,12 @@ function run_npm_install(spec: NpmInstallSpec): Promise<void> {
 
     child.stdout?.on('data', pipe_lines);
     child.stderr?.on('data', pipe_lines);
-    child.on('error', reject);
+    child.on('error', (err) => {
+      stop_poller();
+      reject(err);
+    });
     child.on('exit', (code) => {
+      stop_poller();
       if (code === 0) resolve();
       else reject(new Error(`MyClaw runtime init exited with code ${code}`));
     });

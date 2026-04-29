@@ -27,26 +27,45 @@
     .progress {
       position: relative;
       width: 100%; height: 6px;
-      margin: 18px 0 14px 0;
+      margin: 18px 0 8px 0;
       background: rgba(255, 255, 255, 0.06);
       border-radius: 3px;
       overflow: hidden;
     }
+    /* Determinate bar driven by JS — width is set explicitly. */
     .progress-bar {
       position: absolute; top: 0; left: 0; bottom: 0;
-      width: 35%;
+      width: 0%;
       background: linear-gradient(90deg, #6a8dff 0%, #9b6aff 100%);
       border-radius: 3px;
+      transition: width 0.4s ease-out;
+    }
+    /* Indeterminate fallback: sliding gradient when no count yet. */
+    .progress-bar.indeterminate {
+      width: 35% !important;
       animation: slide 1.6s ease-in-out infinite;
     }
     @keyframes slide {
       0%   { left: -35%; }
       100% { left: 100%; }
     }
+    .meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin: 0 0 12px 0;
+    }
     .stage {
       font-size: 11.5px; color: #b0b3c5;
-      margin: 0 0 10px 0; line-height: 1.4;
-      min-height: 16px;
+      margin: 0; line-height: 1.4;
+      flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .count {
+      font-size: 11px; color: #8e8fa2;
+      font-variant-numeric: tabular-nums;
+      margin-left: 12px;
+      flex-shrink: 0;
     }
     #log {
       flex: 1; min-height: 0;
@@ -70,9 +89,14 @@
 </head>
 <body>
   <h1>Initializing your MyClaw runtime</h1>
-  <p class="subtitle">First launch can take up to a minute. Please keep the window open.</p>
-  <div class="progress" aria-label="initializing"><div class="progress-bar"></div></div>
-  <p class="stage" id="stage">Preparing…</p>
+  <p class="subtitle">First launch downloads about 850 packages and can take 1–10 minutes (longer with active antivirus). Keep this window open.</p>
+  <div class="progress" aria-label="initializing">
+    <div class="progress-bar indeterminate" id="bar"></div>
+  </div>
+  <div class="meta">
+    <p class="stage" id="stage">Preparing…</p>
+    <span class="count" id="count"></span>
+  </div>
   <pre id="log"></pre>
 </body>
 </html>
