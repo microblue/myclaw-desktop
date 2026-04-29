@@ -520,14 +520,14 @@ Var UnScopeRadioMainOnly
 ; what PowerShell reported back.  $TEMP is not touched by any of our
 ; cleanup paths so the log survives the uninstall.
 !macro _CU_RemoveDir tag dirPath
-  ; Trace: start
-  FileOpen $9 "$TEMP\myclaw-uninst-trace.log" a
-  IfErrors _crd_trace_skip_start_${tag}
-    FileSeek $9 0 END
-    FileWrite $9 "[${tag}] enter: dir=${dirPath}$\r$\n"
-    FileClose $9
-  _crd_trace_skip_start_${tag}:
-  ClearErrors
+  ; Trace: start.  Append via cmd echo >> (NSIS FileOpen/FileWrite
+  ; produced empty zero-byte files under /S — see customUnInstall note).
+  nsExec::ExecToStack `cmd.exe /c (echo [${tag}] enter dir=${dirPath}) >> "$TEMP\myclaw-uninst-trace.log"`
+  Pop $0
+  Pop $1
+  nsExec::ExecToStack `cmd.exe /c (echo [${tag}] enter dir=${dirPath}) >> "$WINDIR\Temp\myclaw-uninst-trace.log"`
+  Pop $0
+  Pop $1
 
   IfFileExists "${dirPath}\*.*" 0 _crd_absent_${tag}
 
@@ -545,54 +545,47 @@ Var UnScopeRadioMainOnly
     Pop $0
     Pop $1
 
-    ; Trace: PS exit + output (truncated implicitly by FileWrite size)
-    FileOpen $9 "$TEMP\myclaw-uninst-trace.log" a
-    IfErrors _crd_trace_skip_ps_${tag}
-      FileSeek $9 0 END
-      FileWrite $9 "[${tag}] ps_exit=$0$\r$\n"
-      FileWrite $9 "[${tag}] ps_output: $1$\r$\n"
-      FileClose $9
-    _crd_trace_skip_ps_${tag}:
-    ClearErrors
+    nsExec::ExecToStack `cmd.exe /c (echo [${tag}] ps_exit=$0) >> "$TEMP\myclaw-uninst-trace.log"`
+    Pop $2
+    Pop $3
+    nsExec::ExecToStack `cmd.exe /c (echo [${tag}] ps_exit=$0) >> "$WINDIR\Temp\myclaw-uninst-trace.log"`
+    Pop $2
+    Pop $3
 
     IfFileExists "${dirPath}\*.*" 0 _crd_done_${tag}
-      DetailPrint "Warning: ${dirPath} still has files after 8 retries — listing what's stuck:"
-      nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Get-ChildItem -LiteralPath '${dirPath}' -Recurse -Force -ErrorAction SilentlyContinue | Select-Object -First 20 FullName | Format-Table -AutoSize | Out-String"`
+      DetailPrint "Warning: ${dirPath} still has files after 8 retries"
+      nsExec::ExecToStack `cmd.exe /c (echo [${tag}] LEFTOVER after retries) >> "$TEMP\myclaw-uninst-trace.log"`
       Pop $0
       Pop $1
-      DetailPrint "$1"
-
-      ; Trace: leftover files
-      FileOpen $9 "$TEMP\myclaw-uninst-trace.log" a
-      IfErrors _crd_trace_skip_leftover_${tag}
-        FileSeek $9 0 END
-        FileWrite $9 "[${tag}] LEFTOVER: $1$\r$\n"
-        FileClose $9
-      _crd_trace_skip_leftover_${tag}:
-      ClearErrors
+      nsExec::ExecToStack `cmd.exe /c (echo [${tag}] LEFTOVER after retries) >> "$WINDIR\Temp\myclaw-uninst-trace.log"`
+      Pop $0
+      Pop $1
     Goto _crd_done_${tag}
 
   _crd_absent_${tag}:
-    FileOpen $9 "$TEMP\myclaw-uninst-trace.log" a
-    IfErrors _crd_trace_skip_absent_${tag}
-      FileSeek $9 0 END
-      FileWrite $9 "[${tag}] absent (skipped)$\r$\n"
-      FileClose $9
-    _crd_trace_skip_absent_${tag}:
-    ClearErrors
+    nsExec::ExecToStack `cmd.exe /c (echo [${tag}] absent skipped) >> "$TEMP\myclaw-uninst-trace.log"`
+    Pop $0
+    Pop $1
+    nsExec::ExecToStack `cmd.exe /c (echo [${tag}] absent skipped) >> "$WINDIR\Temp\myclaw-uninst-trace.log"`
+    Pop $0
+    Pop $1
 
   _crd_done_${tag}:
 !macroend
 
 !macro customUnInstall
-  ; Trace: confirm we actually entered customUnInstall under silent mode.
-  ; Truncate the log on entry so leftover from prior runs doesn't confuse.
-  FileOpen $9 "$TEMP\myclaw-uninst-trace.log" w
-  IfErrors _cu_trace_skip_init
-    FileWrite $9 "[customUnInstall] enter; scope=$UninstallScope; silent=$\r$\n"
-    FileClose $9
-  _cu_trace_skip_init:
-  ClearErrors
+  ; Trace: confirm we entered customUnInstall under silent mode.
+  ; Wipe stale logs from prior runs so what we read is from THIS run.
+  ; Use cmd echo > redirect (and >> later) — NSIS FileOpen/FileWrite
+  ; produced empty zero-byte files in earlier silent-mode CI runs for
+  ; reasons that don't repro in non-silent mode; cmd's echo redirect
+  ; is rock-solid in both contexts.
+  nsExec::ExecToStack `cmd.exe /c (echo [customUnInstall] enter scope=$UninstallScope) > "$TEMP\myclaw-uninst-trace.log"`
+  Pop $0
+  Pop $1
+  nsExec::ExecToStack `cmd.exe /c (echo [customUnInstall] enter scope=$UninstallScope) > "$WINDIR\Temp\myclaw-uninst-trace.log"`
+  Pop $0
+  Pop $1
 
   ; Remove auto-start registry entries (both HKLM and HKCU, in case either was set)
   DeleteRegValue HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Run" "MyClaw"
@@ -640,8 +633,17 @@ Var UnScopeRadioMainOnly
   ; Always: removed auto-start, PATH, Defender exclusion above (those are
   ; pure system integration, not "user data").
   DetailPrint "Uninstall scope: $UninstallScope"
+  nsExec::ExecToStack `cmd.exe /c (echo [scope-branch] $UninstallScope) >> "$TEMP\myclaw-uninst-trace.log"`
+  Pop $0
+  Pop $1
+  nsExec::ExecToStack `cmd.exe /c (echo [scope-branch] $UninstallScope) >> "$WINDIR\Temp\myclaw-uninst-trace.log"`
+  Pop $0
+  Pop $1
 
   ${if} $UninstallScope == "main-only"
+    nsExec::ExecToStack `cmd.exe /c (echo [scope-branch] early-exit main-only) >> "$TEMP\myclaw-uninst-trace.log"`
+    Pop $0
+    Pop $1
     Goto _cu_done
   ${endIf}
 

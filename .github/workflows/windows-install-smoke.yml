@@ -994,13 +994,21 @@ jobs:
               "C:\Users\runneradmin\AppData\Local\Temp\myclaw-uninst-trace.log"
             )
             $found = $false
-            foreach ($t in $traceCandidates | Sort-Object -Unique) {
-              if (Test-Path $t) {
-                $found = $true
-                Write-Host "--- $t ---"
-                Get-Content -LiteralPath $t -ErrorAction SilentlyContinue
-                Write-Host ""
+            $seenInodes = @{}
+            foreach ($t in $traceCandidates) {
+              if (-not (Test-Path $t)) { continue }
+              $resolved = (Resolve-Path -LiteralPath $t).ProviderPath
+              if ($seenInodes.ContainsKey($resolved)) { continue }
+              $seenInodes[$resolved] = $true
+              $found = $true
+              $size = (Get-Item -LiteralPath $resolved).Length
+              Write-Host "--- $resolved ($size bytes) ---"
+              if ($size -gt 0) {
+                Get-Content -LiteralPath $resolved -ErrorAction SilentlyContinue
+              } else {
+                Write-Host "(empty file — macro reached FileOpen but FileWrite produced nothing)"
               }
+              Write-Host ""
             }
             if (-not $found) {
               Write-Host "(no trace log found — customUnInstall macro likely did not run, or NSIS \$TEMP resolved elsewhere)"
