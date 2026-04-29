@@ -517,12 +517,20 @@ Var UnScopeRadioMainOnly
     DetailPrint "Removing ${dirPath}..."
     RMDir /r "${dirPath}"
     IfFileExists "${dirPath}\*.*" 0 _crd_skip_${tag}
-      Sleep 2000
+      ; First retry: wait for handles to release, try again
+      Sleep 5000
       nsExec::ExecToStack 'cmd.exe /c rd /s /q "${dirPath}"'
       Pop $0
       Pop $1
       IfFileExists "${dirPath}\*.*" 0 _crd_skip_${tag}
-        DetailPrint "Warning: some files under ${dirPath} could not be removed (locked)."
+        ; Last-ditch: log files held by shutting-down Electron processes
+        ; can stay open for several seconds after the parent exits.
+        Sleep 5000
+        nsExec::ExecToStack 'cmd.exe /c rd /s /q "${dirPath}"'
+        Pop $0
+        Pop $1
+        IfFileExists "${dirPath}\*.*" 0 _crd_skip_${tag}
+          DetailPrint "Warning: some files under ${dirPath} could not be removed (locked)."
   _crd_skip_${tag}:
 !macroend
 
@@ -580,7 +588,17 @@ Var UnScopeRadioMainOnly
 
   ; Kill any lingering MyClaw processes (and their child trees) so we can
   ; release file locks on electron-store JSON, gateway sockets, runtime
-  ; node_modules, etc.  Both scopes "full" and "main+runtime" need this.
+  ; node_modules, log files in %APPDATA%, etc.  Both "full" and
+  ; "main+runtime" scopes need this.
+  ;
+  ; Belt + suspenders:
+  ;   1. taskkill /T /IM MyClaw.One.exe — kills the main app + its tree
+  ;   2. taskkill /F /IM openclaw-gateway.exe — gateway can detach
+  ;   3. PowerShell path-match — catches any node.exe / npm spawned from
+  ;      $INSTDIR (utilityProcess workers, runtime install worker, etc.)
+  ;      that might have escaped the parent tree.
+  ;   4. Longer sleep — Electron's log writer often holds the .log file
+  ;      open for ~3-5s after main process exit while flushing buffers.
   ${nsProcess::FindProcess} "${APP_EXECUTABLE_FILENAME}" $R0
   ${if} $R0 == 0
     nsExec::ExecToStack 'taskkill /F /T /IM "${APP_EXECUTABLE_FILENAME}"'
@@ -591,7 +609,10 @@ Var UnScopeRadioMainOnly
   nsExec::ExecToStack 'taskkill /F /IM openclaw-gateway.exe'
   Pop $0
   Pop $1
-  Sleep 2000
+  nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Get-CimInstance -ClassName Win32_Process | Where-Object { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith('$INSTDIR', [System.StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"`
+  Pop $0
+  Pop $1
+  Sleep 5000
 
   ; --- Always remove ~/.myclaw (the runtime install) on full + main+runtime ---
   ; This is the dir created by ensure_myclaw_runtime_installed; leaving it
