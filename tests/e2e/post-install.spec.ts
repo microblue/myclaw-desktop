@@ -39,13 +39,21 @@ test.describe('Post-install end-to-end (packaged installer output)', () => {
   test.setTimeout(15 * 60 * 1000);
 
   test('installer binary: wizard skip → OpenRouter + Flash Lite → chat → channel install', async ({ page }) => {
-    // === Phase 1: setup wizard ===
-    // The installed exe is running first-launch — the setup page shows
-    // after runtime init completes.  Skip it (UI click-through of the
-    // wizard itself is out-of-scope; see spec header).
-    await expect(page.getByTestId('setup-page')).toBeVisible({ timeout: 60_000 });
-    await page.getByTestId('setup-skip-button').click();
-    await expect(page.getByTestId('main-layout')).toBeVisible();
+    // === Phase 1: reach main-layout ===
+    // First launch shows the setup wizard; subsequent launches (after a
+    // prior spec already clicked setup-skip-button → markSetupComplete)
+    // boot directly into main-layout.  install-smoke.spec.ts runs
+    // earlier in the same job and persists that "setup complete" state
+    // — by the time we arrive here the wizard is usually skipped.
+    // Wait for whichever lands first and drive forward.  60s budget
+    // covers a fully-warm relaunch (runtime/onboard already done).
+    const setup = page.getByTestId('setup-page');
+    const main = page.getByTestId('main-layout');
+    await expect(setup.or(main)).toBeVisible({ timeout: 60_000 });
+    if (await setup.isVisible()) {
+      await page.getByTestId('setup-skip-button').click();
+    }
+    await expect(main).toBeVisible();
 
     // === Phase 2: seed OpenRouter with Google Flash Lite via IPC ===
     // Mirrors chat-smoke's pattern.  We deliberately go through the same
@@ -122,7 +130,7 @@ test.describe('Post-install end-to-end (packaged installer output)', () => {
     });
 
     // Soft log the full result for post-mortem if this step ever flakes.
-    // eslint-disable-next-line no-console
+     
     console.log('[post-install] channel:saveConfig result:', JSON.stringify(channelResult));
 
     expect(channelResult).toMatchObject({ success: true });
