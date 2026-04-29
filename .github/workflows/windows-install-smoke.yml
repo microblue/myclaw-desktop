@@ -915,24 +915,82 @@ jobs:
           }
           Start-Sleep -Seconds 3
 
-      - name: Default silent uninstall
+      - name: Default silent uninstall (= full clean)
         shell: pwsh
         run: |
           $installDir = "${{ steps.install-path.outputs.dir }}"
           $uninstaller = Get-ChildItem $installDir -Filter "Uninstall*.exe" -File | Select-Object -First 1
           if (-not $uninstaller) { throw "Uninstaller not found in $installDir" }
-          Write-Host "Running: $($uninstaller.FullName) /S"
+          Write-Host "Running: $($uninstaller.FullName) /S  (default scope = full clean)"
           $p = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait -PassThru -NoNewWindow
           if ($p.ExitCode -ne 0) { throw "default uninstaller exit $($p.ExitCode)" }
 
-      - name: Assert canary survived default silent uninstall
+      - name: Assert default silent uninstall wiped everything
         shell: pwsh
         run: |
-          $canary = Join-Path $env:USERPROFILE ".openclaw\canary.txt"
-          if (-not (Test-Path $canary)) {
-            throw "REGRESSION: default silent uninstall wiped $canary — must require /REMOVE_OPENCLAW"
+          # Default scope is "full": no canary, no ~/.myclaw, no Electron userData.
+          # Reinstalling after this should land on the first-launch wizard again.
+          $canary  = Join-Path $env:USERPROFILE ".openclaw\canary.txt"
+          $myclaw  = Join-Path $env:USERPROFILE ".myclaw"
+          $appData = Join-Path $env:APPDATA   "myclaw-desktop"
+          $localAd = Join-Path $env:LOCALAPPDATA "myclaw-desktop"
+          $bad = @()
+          if (Test-Path $canary)  { $bad += $canary  }
+          if (Test-Path $myclaw)  { $bad += $myclaw  }
+          if (Test-Path $appData) { $bad += $appData }
+          if (Test-Path $localAd) { $bad += $localAd }
+          if ($bad.Count -gt 0) {
+            throw "REGRESSION: default silent uninstall left these behind:`n  $($bad -join "`n  ")"
           }
-          Write-Host "OK: canary survived default silent uninstall"
+          Write-Host "OK: default silent uninstall wiped everything (full-clean default)"
+
+      - name: Re-seed dirs for main-only scope test
+        shell: pwsh
+        run: |
+          # Re-create the dirs that "main-only" should preserve, so the next
+          # uninstall has something visible to NOT delete.
+          $openclaw = Join-Path $env:USERPROFILE ".openclaw"
+          $myclaw   = Join-Path $env:USERPROFILE ".myclaw"
+          $appData  = Join-Path $env:APPDATA   "myclaw-desktop"
+          New-Item -ItemType Directory -Force -Path $openclaw | Out-Null
+          New-Item -ItemType Directory -Force -Path $myclaw | Out-Null
+          New-Item -ItemType Directory -Force -Path $appData | Out-Null
+          Set-Content -Path (Join-Path $openclaw "canary.txt") -Value "canary-main-only" -Encoding utf8
+          Set-Content -Path (Join-Path $myclaw   "canary.txt") -Value "canary-main-only" -Encoding utf8
+          Set-Content -Path (Join-Path $appData  "canary.txt") -Value "canary-main-only" -Encoding utf8
+
+      - name: Re-install (to exercise /UNINSTALL_SCOPE=main-only)
+        shell: pwsh
+        run: |
+          $installer = "${{ steps.locate.outputs.installer }}"
+          $p = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "reinstall (for main-only) exit $($p.ExitCode)" }
+
+      - name: Uninstall with /S /UNINSTALL_SCOPE=main-only
+        shell: pwsh
+        run: |
+          $installDir = "${{ steps.install-path.outputs.dir }}"
+          $uninstaller = Get-ChildItem $installDir -Filter "Uninstall*.exe" -File | Select-Object -First 1
+          if (-not $uninstaller) { throw "Uninstaller not found for main-only test" }
+          Write-Host "Running: $($uninstaller.FullName) /S /UNINSTALL_SCOPE=main-only"
+          $p = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S','/UNINSTALL_SCOPE=main-only' -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "main-only uninstaller exit $($p.ExitCode)" }
+
+      - name: Assert main-only kept all data
+        shell: pwsh
+        run: |
+          $missing = @()
+          foreach ($p in @(
+            (Join-Path $env:USERPROFILE ".openclaw\canary.txt"),
+            (Join-Path $env:USERPROFILE ".myclaw\canary.txt"),
+            (Join-Path $env:APPDATA "myclaw-desktop\canary.txt")
+          )) {
+            if (-not (Test-Path $p)) { $missing += $p }
+          }
+          if ($missing.Count -gt 0) {
+            throw "BUG: /UNINSTALL_SCOPE=main-only deleted dirs it should have kept:`n  $($missing -join "`n  ")"
+          }
+          Write-Host "OK: main-only scope preserved all user data"
 
       - name: Re-seed canary for /FORCE_REINSTALL_OPENCLAW test
         shell: pwsh

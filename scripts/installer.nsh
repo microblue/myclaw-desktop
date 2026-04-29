@@ -223,10 +223,21 @@ Var ForceReinstallOpenClawCheckbox
 Var ForceReinstallOpenClawState
 
 ; --- CLI opt-in for the uninstall-time .openclaw wipe ---
-; Populated by customUnInit from /REMOVE_OPENCLAW.  In silent uninstalls the
-; MessageBox auto-answers No (/SD IDNO), so the only way to trigger the wipe
-; headlessly (CI, enterprise deploy) is this flag.
+; Legacy flag — kept for back-compat with anything that calls Uninstall.exe
+; with /REMOVE_OPENCLAW.  Treated as a synonym for /UNINSTALL_SCOPE=full.
 Var RemoveOpenClawFromCLI
+
+; --- Uninstall scope: "full" | "main+runtime" | "main-only" ---
+; Default "full" matches user expectation of a clean uninstall.  Advanced
+; users can pick a softer scope from the welcome page.  Headless (silent)
+; uninstalls take this from /UNINSTALL_SCOPE=<value> (parsed in customUnInit)
+; and skip the page entirely.
+Var UninstallScope
+; Radio-button handles for the welcome page (declared at global scope so
+; the create / leave functions in customUnWelcomePage can share them).
+Var UnScopeRadioFull
+Var UnScopeRadioRuntime
+Var UnScopeRadioMainOnly
 
 ; NOTE on scope / compile timing:
 ; electron-builder injects this installer.nsh at the very START of the
@@ -261,14 +272,118 @@ Var RemoveOpenClawFromCLI
 !macroend
 
 !macro customUnInit
-  ; Accept /REMOVE_OPENCLAW as the headless equivalent of answering Yes to
-  ; the uninstall-time "remove .openclaw?" prompt.
+  ; Default scope: full clean.  This is the recommended option and what
+  ; silent uninstalls get unless overridden.  Most users uninstalling want
+  ; a clean slate, and v1.6+ first-launch heuristics rely on a missing
+  ; ~/.myclaw/runtime/ to trigger fresh init — leaving it behind makes the
+  ; next install start "half-configured" with no setup wizard.
+  StrCpy $UninstallScope "full"
+
   ${GetParameters} $R0
+
+  ; Legacy flag: /REMOVE_OPENCLAW behaves like /UNINSTALL_SCOPE=full.
+  ; Anything that previously passed it gets the new full-clean by default.
   ClearErrors
   ${GetOptions} $R0 "/REMOVE_OPENCLAW" $R1
   ${IfNot} ${Errors}
     StrCpy $RemoveOpenClawFromCLI "1"
+    StrCpy $UninstallScope "full"
   ${EndIf}
+
+  ; Headless override: /UNINSTALL_SCOPE=full | main+runtime | main-only
+  ClearErrors
+  ${GetOptions} $R0 "/UNINSTALL_SCOPE=" $R1
+  ${IfNot} ${Errors}
+    ${if} $R1 == "full"
+      StrCpy $UninstallScope "full"
+    ${elseif} $R1 == "main+runtime"
+      StrCpy $UninstallScope "main+runtime"
+    ${elseif} $R1 == "main-only"
+      StrCpy $UninstallScope "main-only"
+    ${else}
+      DetailPrint "Warning: unknown /UNINSTALL_SCOPE value '$R1'; using full"
+    ${endif}
+  ${EndIf}
+!macroend
+
+; The uninstaller welcome page.  Replaces MUI's default welcome with a
+; nsDialogs-based scope picker (3 radio buttons, default = full clean).
+;
+; Why hijack the welcome page: electron-builder's uninstaller pipeline
+; is welcome → instfiles → finish.  customUnInstall runs INSIDE instfiles
+; (i.e. the work is already happening); the only place we can ask the
+; user a question and have customUnInstall act on the answer is the
+; welcome page.  The trade-off is that we lose the standard "Click Next
+; to begin uninstall" branding.
+;
+; Silent mode: nsDialogs::Show falls through immediately without rendering
+; in /S mode, so $UninstallScope keeps whatever customUnInit set
+; (default "full" or whatever /UNINSTALL_SCOPE=... selected).
+!macro customUnWelcomePage
+  Function un.uninstScopePageCreate
+    !insertmacro MUI_HEADER_TEXT "Uninstall MyClaw.One" "Choose how thoroughly to remove MyClaw.One from this computer."
+
+    nsDialogs::Create 1018
+    Pop $0
+    ${if} $0 == error
+      Abort
+    ${endIf}
+
+    ${NSD_CreateLabel} 0 0 100% 28u "Pick a scope. The default removes everything; the other options are for advanced users who plan to reinstall and want to preserve some state."
+    Pop $0
+
+    ; --- Option 1: Full clean (default, recommended) ---
+    ${NSD_CreateRadioButton} 0 36u 100% 12u "Full clean (recommended) — remove app + ~/.myclaw + ~/.openclaw + AppData"
+    Pop $UnScopeRadioFull
+    ${NSD_CreateLabel} 16u 50u 100% 12u "Reinstall starts fresh, including the first-launch setup wizard."
+    Pop $0
+
+    ; --- Option 2: Main + runtime ---
+    ${NSD_CreateRadioButton} 0 70u 100% 12u "Remove app + MyClaw runtime — keep ~/.openclaw and provider configs"
+    Pop $UnScopeRadioRuntime
+    ${NSD_CreateLabel} 16u 84u 100% 12u "Reinstall re-fetches openclaw but remembers your providers and channels."
+    Pop $0
+
+    ; --- Option 3: Main only ---
+    ${NSD_CreateRadioButton} 0 104u 100% 12u "Remove app only — keep all configuration and runtime data"
+    Pop $UnScopeRadioMainOnly
+    ${NSD_CreateLabel} 16u 118u 100% 12u "Choose this if you plan to reinstall right away and want zero downtime."
+    Pop $0
+
+    ; Default selection follows whatever customUnInit / CLI flag set.
+    ${if} $UninstallScope == "main-only"
+      ${NSD_SetState} $UnScopeRadioMainOnly ${BST_CHECKED}
+    ${elseif} $UninstallScope == "main+runtime"
+      ${NSD_SetState} $UnScopeRadioRuntime ${BST_CHECKED}
+    ${else}
+      ${NSD_SetState} $UnScopeRadioFull ${BST_CHECKED}
+    ${endIf}
+
+    nsDialogs::Show
+  FunctionEnd
+
+  Function un.uninstScopePageLeave
+    ${NSD_GetState} $UnScopeRadioFull $0
+    ${if} $0 == ${BST_CHECKED}
+      StrCpy $UninstallScope "full"
+      Goto _scope_chosen
+    ${endIf}
+    ${NSD_GetState} $UnScopeRadioRuntime $0
+    ${if} $0 == ${BST_CHECKED}
+      StrCpy $UninstallScope "main+runtime"
+      Goto _scope_chosen
+    ${endIf}
+    ${NSD_GetState} $UnScopeRadioMainOnly $0
+    ${if} $0 == ${BST_CHECKED}
+      StrCpy $UninstallScope "main-only"
+      Goto _scope_chosen
+    ${endIf}
+    ; No selection — fall back to default.
+    StrCpy $UninstallScope "full"
+  _scope_chosen:
+  FunctionEnd
+
+  UninstPage custom un.uninstScopePageCreate un.uninstScopePageLeave
 !macroend
 
 !macro customPageAfterChangeDir
@@ -391,6 +506,24 @@ Var RemoveOpenClawFromCLI
   DetailPrint "Installation steps complete."
 !macroend
 
+; Helper: remove a directory with retry-on-locked.  Wraps the same
+; "RMDir /r → wait → cmd /c rd /s /q → warn" pattern that was previously
+; inlined per directory.  ${__LINE__} gives each !insertmacro call site
+; unique label names, so multiple calls in the same macro don't collide.
+!macro _CU_RemoveDir dirPath
+  IfFileExists "${dirPath}\*.*" 0 _crd_skip_${__LINE__}
+    DetailPrint "Removing ${dirPath}..."
+    RMDir /r "${dirPath}"
+    IfFileExists "${dirPath}\*.*" 0 _crd_skip_${__LINE__}
+      Sleep 2000
+      nsExec::ExecToStack 'cmd.exe /c rd /s /q "${dirPath}"'
+      Pop $0
+      Pop $1
+      IfFileExists "${dirPath}\*.*" 0 _crd_skip_${__LINE__}
+        DetailPrint "Warning: some files under ${dirPath} could not be removed (locked)."
+  _crd_skip_${__LINE__}:
+!macroend
+
 !macro customUnInstall
   ; Remove auto-start registry entries (both HKLM and HKCU, in case either was set)
   DeleteRegValue HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Run" "MyClaw"
@@ -418,114 +551,84 @@ Var RemoveOpenClawFromCLI
 
   _cu_pathDone:
 
-  ; Ask user if they want to remove AppData. A separate prompt below handles
-  ; the .openclaw folder so the two decisions stay independent.
-  MessageBox MB_YESNO|MB_ICONQUESTION \
-    "Do you want to remove MyClaw application data?$\r$\n$\r$\nThis will delete:$\r$\n  • AppData\Local\myclaw (local app data)$\r$\n  • AppData\Roaming\myclaw (roaming app data)$\r$\n$\r$\nThe .openclaw folder (OpenClaw configuration & skills) is handled by a separate question next.$\r$\nSelect 'No' to keep MyClaw app data for future reinstallation." \
-    /SD IDNO IDYES _cu_removeData IDNO _cu_skipRemove
+  ; --- Scope-driven cleanup ---
+  ;
+  ; Three scopes (set on the welcome page or via /UNINSTALL_SCOPE=...):
+  ;
+  ;   "full"          — remove everything: app + ~/.myclaw + ~/.openclaw +
+  ;                     %APPDATA%\myclaw-desktop + %LOCALAPPDATA%\myclaw-desktop.
+  ;                     Reinstall starts from the first-launch wizard.
+  ;
+  ;   "main+runtime"  — remove app + ~/.myclaw, keep ~/.openclaw and the
+  ;                     Electron userData (provider/channel config in
+  ;                     electron-store).  Reinstall re-fetches openclaw
+  ;                     but remembers the user's setup.
+  ;
+  ;   "main-only"     — keep everything except the app binary.  For users
+  ;                     about to reinstall immediately.
+  ;
+  ; Always: kill running processes, release file locks before touching dirs.
+  ; Always: removed auto-start, PATH, Defender exclusion above (those are
+  ; pure system integration, not "user data").
+  DetailPrint "Uninstall scope: $UninstallScope"
 
-  _cu_removeData:
-    ; Kill any lingering MyClaw processes (and their child process trees) to
-    ; release file locks on electron-store JSON files, Gateway sockets, etc.
-    ${nsProcess::FindProcess} "${APP_EXECUTABLE_FILENAME}" $R0
-    ${if} $R0 == 0
-      nsExec::ExecToStack 'taskkill /F /T /IM "${APP_EXECUTABLE_FILENAME}"'
-      Pop $0
-      Pop $1
-    ${endIf}
-    ${nsProcess::Unload}
+  ${if} $UninstallScope == "main-only"
+    Goto _cu_done
+  ${endIf}
 
-    ; Wait for processes to fully exit and release file handles
-    Sleep 2000
+  ; Kill any lingering MyClaw processes (and their child trees) so we can
+  ; release file locks on electron-store JSON, gateway sockets, runtime
+  ; node_modules, etc.  Both scopes "full" and "main+runtime" need this.
+  ${nsProcess::FindProcess} "${APP_EXECUTABLE_FILENAME}" $R0
+  ${if} $R0 == 0
+    nsExec::ExecToStack 'taskkill /F /T /IM "${APP_EXECUTABLE_FILENAME}"'
+    Pop $0
+    Pop $1
+  ${endIf}
+  ${nsProcess::Unload}
+  nsExec::ExecToStack 'taskkill /F /IM openclaw-gateway.exe'
+  Pop $0
+  Pop $1
+  Sleep 2000
 
-    ; --- Always remove current user's AppData first ---
-    ; NOTE: .openclaw directory is intentionally preserved (user configuration & skills)
-    RMDir /r "$LOCALAPPDATA\myclaw"
-    RMDir /r "$APPDATA\myclaw"
+  ; --- Always remove ~/.myclaw (the runtime install) on full + main+runtime ---
+  ; This is the dir created by ensure_myclaw_runtime_installed; leaving it
+  ; behind makes the next install think the runtime is already there and
+  ; skip the first-launch flow.  Removing it = clean reinit on next run.
+  !insertmacro _CU_RemoveDir "$PROFILE\.myclaw"
 
-    ; --- Retry: if directories still exist (locked files), wait and try again ---
+  ; --- Full clean: also wipe Electron userData + ~/.openclaw ---
+  ${if} $UninstallScope == "full"
+    ; Electron's app.getName() returns the package.json "name" field
+    ; ("myclaw-desktop"), not productName ("MyClaw.One"), so userData
+    ; lives under %APPDATA%\myclaw-desktop\, not %APPDATA%\MyClaw.One\.
+    !insertmacro _CU_RemoveDir "$APPDATA\myclaw-desktop"
+    !insertmacro _CU_RemoveDir "$LOCALAPPDATA\myclaw-desktop"
+    !insertmacro _CU_RemoveDir "$PROFILE\.openclaw"
+  ${endIf}
 
-    ; Check AppData\Local\myclaw
-    IfFileExists "$LOCALAPPDATA\myclaw\*.*" 0 _cu_localDone
-      Sleep 3000
-      RMDir /r "$LOCALAPPDATA\myclaw"
-      IfFileExists "$LOCALAPPDATA\myclaw\*.*" 0 _cu_localDone
-        nsExec::ExecToStack 'cmd.exe /c rd /s /q "$LOCALAPPDATA\myclaw"'
-        Pop $0
-        Pop $1
-    _cu_localDone:
-
-    ; Check AppData\Roaming\myclaw
-    IfFileExists "$APPDATA\myclaw\*.*" 0 _cu_roamingDone
-      Sleep 3000
-      RMDir /r "$APPDATA\myclaw"
-      IfFileExists "$APPDATA\myclaw\*.*" 0 _cu_roamingDone
-        nsExec::ExecToStack 'cmd.exe /c rd /s /q "$APPDATA\myclaw"'
-        Pop $0
-        Pop $1
-    _cu_roamingDone:
-
-    ; --- Final check: warn user if any directories could not be removed ---
-    StrCpy $R3 ""
-    IfFileExists "$LOCALAPPDATA\myclaw\*.*" 0 +2
-      StrCpy $R3 "$R3$\r$\n  • $LOCALAPPDATA\myclaw"
-    IfFileExists "$APPDATA\myclaw\*.*" 0 +2
-      StrCpy $R3 "$R3$\r$\n  • $APPDATA\myclaw"
-    StrCmp $R3 "" _cu_cleanupOk
-      MessageBox MB_OK|MB_ICONEXCLAMATION \
-        "Some data directories could not be removed (files may be in use):$\r$\n$R3$\r$\n$\r$\nPlease delete them manually after restarting your computer."
-    _cu_cleanupOk:
-
-    ; --- For per-machine (all users) installs, enumerate all user profiles ---
-    StrCpy $R0 0
-
+  ; --- Per-machine installs: clean other users' profiles too ---
+  ; Same scope rules: full = everything, main+runtime = ~/.myclaw only.
+  StrCpy $R0 0
   _cu_enumLoop:
     EnumRegKey $R1 HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList" $R0
     StrCmp $R1 "" _cu_enumDone
-
     ReadRegStr $R2 HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$R1" "ProfileImagePath"
     StrCmp $R2 "" _cu_enumNext
-
-    ; ExpandEnvStrings requires distinct src and dest registers
     ExpandEnvStrings $R3 $R2
     StrCmp $R3 $PROFILE _cu_enumNext
-
-    ; NOTE: .openclaw directory is intentionally preserved for all users
-    RMDir /r "$R3\AppData\Local\myclaw"
-    RMDir /r "$R3\AppData\Roaming\myclaw"
-
+    ; Use plain RMDir /r for other-user dirs — we can't easily warn / retry
+    ; for accounts other than the one running the uninstall.
+    RMDir /r "$R3\.myclaw"
+    ${if} $UninstallScope == "full"
+      RMDir /r "$R3\AppData\Roaming\myclaw-desktop"
+      RMDir /r "$R3\AppData\Local\myclaw-desktop"
+      RMDir /r "$R3\.openclaw"
+    ${endIf}
   _cu_enumNext:
     IntOp $R0 $R0 + 1
     Goto _cu_enumLoop
-
   _cu_enumDone:
-  _cu_skipRemove:
 
-  ; --- Independent prompt: remove $PROFILE\.openclaw ? ---
-  ; Kept separate so users who only want to wipe OpenClaw state (skills,
-  ; config, cache) can do so without also losing MyClaw's AppData (and vice
-  ; versa). Default is No — silent uninstalls preserve user data.
-  ; If /REMOVE_OPENCLAW was passed (CLI / CI), bypass the prompt entirely
-  ; and go straight to the wipe — the flag IS the answer.
-  ${if} $RemoveOpenClawFromCLI == "1"
-    Goto _cu_removeOpenClaw
-  ${endIf}
-  MessageBox MB_YESNO|MB_ICONQUESTION \
-    "Do you also want to remove the OpenClaw data folder?$\r$\n$\r$\nThis will delete:$\r$\n  • $PROFILE\.openclaw (configuration, skills, caches)$\r$\n$\r$\nSelect 'No' to keep it (recommended if you plan to reinstall and keep your current setup)." \
-    /SD IDNO IDYES _cu_removeOpenClaw IDNO _cu_skipOpenClaw
-
-  _cu_removeOpenClaw:
-    DetailPrint "Removing $PROFILE\.openclaw..."
-    RMDir /r "$PROFILE\.openclaw"
-    IfFileExists "$PROFILE\.openclaw\*.*" 0 _cu_ocDone
-      Sleep 2000
-      nsExec::ExecToStack 'cmd.exe /c rd /s /q "$PROFILE\.openclaw"'
-      Pop $0
-      Pop $1
-      IfFileExists "$PROFILE\.openclaw\*.*" 0 _cu_ocDone
-        MessageBox MB_OK|MB_ICONEXCLAMATION \
-          "Some files under $PROFILE\.openclaw could not be removed (they may be locked).$\r$\n$\r$\nPlease delete the folder manually after restarting your computer."
-    _cu_ocDone:
-
-  _cu_skipOpenClaw:
+  _cu_done:
 !macroend
