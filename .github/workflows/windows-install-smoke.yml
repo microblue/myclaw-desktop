@@ -660,16 +660,17 @@ jobs:
           # Electron userData defaults to %APPDATA%\<productName>; productName is MyClaw.One
           $appLogs = Join-Path $env:APPDATA "MyClaw.One\logs"
 
-          # 600s covers a worst-case cold first-launch on windows-latest:
+          # 900s covers a worst-case cold first-launch on windows-latest:
           # MyClaw's ensure_myclaw_runtime_installed runs `npm install
-          # openclaw + plugins` into ~/.myclaw/runtime/ (3-5 min observed
-          # for Layer 3's identical install), then spawns the gateway
-          # which itself takes ~30s to bind 18789 on first boot.  Once
-          # the gateway port is listening or MyClaw exits non-zero with a
-          # crash trace, we exit early — the hard cap mostly matters
-          # when the app deadlocks silently (which shouldn't happen now
-          # that crash-handlers.ts catches uncaught exceptions).
-          $totalWaitSec = 600
+          # openclaw + plugins` into ~/.myclaw/runtime/ (3-5 min typical,
+          # but observed up to 25 min on heavily-loaded runners with AV
+          # contention), then spawns the gateway which itself takes ~30s
+          # to bind 18789 on first boot.  600s used to be enough but a
+          # series of slow runs in late 2026-04 timed out before the
+          # gateway could boot.  Once the gateway port is listening or
+          # MyClaw exits non-zero with a crash trace, we exit early —
+          # the hard cap mostly matters when the app deadlocks silently.
+          $totalWaitSec = 900
           $start = Get-Date
           $deadline = $start.AddSeconds($totalWaitSec)
           $found = $false
