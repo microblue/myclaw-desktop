@@ -916,6 +916,31 @@ jobs:
           }
           Start-Sleep -Seconds 3
 
+      - name: Pre-uninstall — kill orphan MyClaw / Electron / node processes
+        shell: pwsh
+        run: |
+          # Belt-and-suspenders: previous step (Launch MyClaw + ...) leaves
+          # MyClaw running by design (next step's HTTP probe needs it),
+          # and the Playwright install-smoke step also launches its own
+          # Electron.  Kill anything left over so the uninstaller's own
+          # taskkill doesn't have to race a respawning child tree.
+          Get-Process |
+            Where-Object { $_.ProcessName -match "^MyClaw\.One$|^openclaw-gateway$|^node$|^electron$" } |
+            ForEach-Object {
+              Write-Host "killing $($_.ProcessName) pid=$($_.Id)"
+              Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+            }
+          Start-Sleep -Seconds 5
+          Write-Host "=== %APPDATA%\myclaw-desktop snapshot before uninstall ==="
+          $appData = Join-Path $env:APPDATA "myclaw-desktop"
+          if (Test-Path $appData) {
+            Get-ChildItem -LiteralPath $appData -Force -ErrorAction SilentlyContinue |
+              Select-Object Name, Length, LastWriteTime |
+              Format-Table -AutoSize | Out-String | Write-Host
+          } else {
+            Write-Host "(does not exist)"
+          }
+
       - name: Default silent uninstall (= full clean)
         shell: pwsh
         run: |
