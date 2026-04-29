@@ -508,20 +508,22 @@ Var UnScopeRadioMainOnly
 
 ; Helper: remove a directory with retry-on-locked.  Wraps the same
 ; "RMDir /r → wait → cmd /c rd /s /q → warn" pattern that was previously
-; inlined per directory.  ${__LINE__} gives each !insertmacro call site
-; unique label names, so multiple calls in the same macro don't collide.
-!macro _CU_RemoveDir dirPath
-  IfFileExists "${dirPath}\*.*" 0 _crd_skip_${__LINE__}
+; inlined per directory.  Caller supplies a unique `tag` so the labels
+; don't collide across multiple !insertmacro sites in the same function
+; (NSIS's ${__LINE__} expands to "file.line.depth" — contains dots,
+; invalid for label names).
+!macro _CU_RemoveDir tag dirPath
+  IfFileExists "${dirPath}\*.*" 0 _crd_skip_${tag}
     DetailPrint "Removing ${dirPath}..."
     RMDir /r "${dirPath}"
-    IfFileExists "${dirPath}\*.*" 0 _crd_skip_${__LINE__}
+    IfFileExists "${dirPath}\*.*" 0 _crd_skip_${tag}
       Sleep 2000
       nsExec::ExecToStack 'cmd.exe /c rd /s /q "${dirPath}"'
       Pop $0
       Pop $1
-      IfFileExists "${dirPath}\*.*" 0 _crd_skip_${__LINE__}
+      IfFileExists "${dirPath}\*.*" 0 _crd_skip_${tag}
         DetailPrint "Warning: some files under ${dirPath} could not be removed (locked)."
-  _crd_skip_${__LINE__}:
+  _crd_skip_${tag}:
 !macroend
 
 !macro customUnInstall
@@ -595,16 +597,16 @@ Var UnScopeRadioMainOnly
   ; This is the dir created by ensure_myclaw_runtime_installed; leaving it
   ; behind makes the next install think the runtime is already there and
   ; skip the first-launch flow.  Removing it = clean reinit on next run.
-  !insertmacro _CU_RemoveDir "$PROFILE\.myclaw"
+  !insertmacro _CU_RemoveDir myclaw_runtime "$PROFILE\.myclaw"
 
   ; --- Full clean: also wipe Electron userData + ~/.openclaw ---
   ${if} $UninstallScope == "full"
     ; Electron's app.getName() returns the package.json "name" field
     ; ("myclaw-desktop"), not productName ("MyClaw.One"), so userData
     ; lives under %APPDATA%\myclaw-desktop\, not %APPDATA%\MyClaw.One\.
-    !insertmacro _CU_RemoveDir "$APPDATA\myclaw-desktop"
-    !insertmacro _CU_RemoveDir "$LOCALAPPDATA\myclaw-desktop"
-    !insertmacro _CU_RemoveDir "$PROFILE\.openclaw"
+    !insertmacro _CU_RemoveDir appdata_roaming "$APPDATA\myclaw-desktop"
+    !insertmacro _CU_RemoveDir appdata_local   "$LOCALAPPDATA\myclaw-desktop"
+    !insertmacro _CU_RemoveDir openclaw_home   "$PROFILE\.openclaw"
   ${endIf}
 
   ; --- Per-machine installs: clean other users' profiles too ---
