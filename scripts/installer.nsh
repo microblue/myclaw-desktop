@@ -686,8 +686,17 @@ Var UnScopeRadioMainOnly
     ; Electron's app.getName() returns the package.json "name" field
     ; ("myclaw-desktop"), not productName ("MyClaw.One"), so userData
     ; lives under %APPDATA%\myclaw-desktop\, not %APPDATA%\MyClaw.One\.
-    !insertmacro _CU_RemoveDir appdata_roaming "$APPDATA\myclaw-desktop"
-    !insertmacro _CU_RemoveDir appdata_local   "$LOCALAPPDATA\myclaw-desktop"
+    ;
+    ; CRITICAL: use $PROFILE\AppData\... not $APPDATA / $LOCALAPPDATA.
+    ; In a per-machine uninstaller, electron-builder calls
+    ; SetShellVarContext all, which makes $APPDATA resolve to
+    ; C:\ProgramData (and $LOCALAPPDATA likewise) — i.e. the wrong
+    ; place entirely.  The Electron userData was written using the
+    ; running user's profile context, so the only path that actually
+    ; matches is $PROFILE\AppData\....  $PROFILE is unaffected by
+    ; shell context.
+    !insertmacro _CU_RemoveDir appdata_roaming "$PROFILE\AppData\Roaming\myclaw-desktop"
+    !insertmacro _CU_RemoveDir appdata_local   "$PROFILE\AppData\Local\myclaw-desktop"
     !insertmacro _CU_RemoveDir openclaw_home   "$PROFILE\.openclaw"
   ${endIf}
 
