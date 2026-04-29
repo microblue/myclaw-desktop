@@ -4,9 +4,9 @@
     "default_backend": "openclaw",
     "available_backends": {
         "openclaw": {
-            "version": "2026.4.22",
+            "version": "2026.4.26",
             "tested_compatible": {
-                "min": "2026.4.22"
+                "min": "2026.4.26"
             },
             "preinstalled_plugins": {
                 "@wecom/wecom-openclaw-plugin": "^2026.4.3",
