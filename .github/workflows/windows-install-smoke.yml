@@ -940,6 +940,19 @@ jobs:
           if (Test-Path $appData) { $bad += $appData }
           if (Test-Path $localAd) { $bad += $localAd }
           if ($bad.Count -gt 0) {
+            Write-Host "=== Diagnostics: dirs that survived the full-clean uninstall ==="
+            foreach ($p in $bad) {
+              Write-Host ""
+              Write-Host "--- $p ---"
+              Get-ChildItem -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue |
+                Select-Object -First 30 FullName, Length, LastWriteTime |
+                Format-Table -AutoSize | Out-String | Write-Host
+            }
+            Write-Host ""
+            Write-Host "=== Processes potentially holding handles ==="
+            Get-Process | Where-Object { $_.ProcessName -match "myclaw|electron|node|openclaw" } |
+              Select-Object Id, ProcessName, Path, StartTime |
+              Format-Table -AutoSize | Out-String | Write-Host
             throw "REGRESSION: default silent uninstall left these behind:`n  $($bad -join "`n  ")"
           }
           Write-Host "OK: default silent uninstall wiped everything (full-clean default)"

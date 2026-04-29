@@ -515,22 +515,24 @@ Var UnScopeRadioMainOnly
 !macro _CU_RemoveDir tag dirPath
   IfFileExists "${dirPath}\*.*" 0 _crd_skip_${tag}
     DetailPrint "Removing ${dirPath}..."
-    RMDir /r "${dirPath}"
+    ; PowerShell with a retry loop handles the long tail of file-handle
+    ; release on Windows much more reliably than NSIS's RMDir + sleep:
+    ;   - electron-log keeps myclaw-YYYY-MM-DD.log open for up to ~10s
+    ;     after the parent exits
+    ;   - Chromium's sqlite WAL files (Cookies-journal, etc.) hold
+    ;     handles via the kernel for a similar window
+    ;   - Windows Defender real-time scan opens every newly-created
+    ;     file briefly during cleanup
+    ; The loop tries up to 8 times (~32s wall) before giving up.
+    nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$d = '${dirPath}'; for ($$i = 0; $$i -lt 8; $$i++) { Remove-Item -LiteralPath $$d -Recurse -Force -ErrorAction SilentlyContinue; if (-not (Test-Path -LiteralPath $$d)) { Write-Output 'gone'; break } ; Start-Sleep -Seconds 4 }"`
+    Pop $0
+    Pop $1
     IfFileExists "${dirPath}\*.*" 0 _crd_skip_${tag}
-      ; First retry: wait for handles to release, try again
-      Sleep 5000
-      nsExec::ExecToStack 'cmd.exe /c rd /s /q "${dirPath}"'
+      DetailPrint "Warning: ${dirPath} still has files after 8 retries — listing what's stuck:"
+      nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Get-ChildItem -LiteralPath '${dirPath}' -Recurse -Force -ErrorAction SilentlyContinue | Select-Object -First 20 FullName | Format-Table -AutoSize | Out-String"`
       Pop $0
       Pop $1
-      IfFileExists "${dirPath}\*.*" 0 _crd_skip_${tag}
-        ; Last-ditch: log files held by shutting-down Electron processes
-        ; can stay open for several seconds after the parent exits.
-        Sleep 5000
-        nsExec::ExecToStack 'cmd.exe /c rd /s /q "${dirPath}"'
-        Pop $0
-        Pop $1
-        IfFileExists "${dirPath}\*.*" 0 _crd_skip_${tag}
-          DetailPrint "Warning: some files under ${dirPath} could not be removed (locked)."
+      DetailPrint "$1"
   _crd_skip_${tag}:
 !macroend
 
