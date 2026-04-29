@@ -512,8 +512,25 @@ Var UnScopeRadioMainOnly
 ; don't collide across multiple !insertmacro sites in the same function
 ; (NSIS's ${__LINE__} expands to "file.line.depth" — contains dots,
 ; invalid for label names).
+;
+; Also emits a trace line to $TEMP\myclaw-uninst-trace.log on every
+; invocation.  Silent mode (/S) suppresses DetailPrint output entirely,
+; so this disk log is the ONLY way CI (or a user inspecting after a
+; failed uninstall) can see which dirs the macro tried to remove and
+; what PowerShell reported back.  $TEMP is not touched by any of our
+; cleanup paths so the log survives the uninstall.
 !macro _CU_RemoveDir tag dirPath
-  IfFileExists "${dirPath}\*.*" 0 _crd_skip_${tag}
+  ; Trace: start
+  FileOpen $9 "$TEMP\myclaw-uninst-trace.log" a
+  IfErrors _crd_trace_skip_start_${tag}
+    FileSeek $9 0 END
+    FileWrite $9 "[${tag}] enter: dir=${dirPath}$\r$\n"
+    FileClose $9
+  _crd_trace_skip_start_${tag}:
+  ClearErrors
+
+  IfFileExists "${dirPath}\*.*" 0 _crd_absent_${tag}
+
     DetailPrint "Removing ${dirPath}..."
     ; PowerShell with a retry loop handles the long tail of file-handle
     ; release on Windows much more reliably than NSIS's RMDir + sleep:
@@ -524,19 +541,59 @@ Var UnScopeRadioMainOnly
     ;   - Windows Defender real-time scan opens every newly-created
     ;     file briefly during cleanup
     ; The loop tries up to 8 times (~32s wall) before giving up.
-    nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$d = '${dirPath}'; for ($$i = 0; $$i -lt 8; $$i++) { Remove-Item -LiteralPath $$d -Recurse -Force -ErrorAction SilentlyContinue; if (-not (Test-Path -LiteralPath $$d)) { Write-Output 'gone'; break } ; Start-Sleep -Seconds 4 }"`
+    nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$d = '${dirPath}'; for ($$i = 0; $$i -lt 8; $$i++) { Remove-Item -LiteralPath $$d -Recurse -Force -ErrorAction SilentlyContinue; if (-not (Test-Path -LiteralPath $$d)) { Write-Output 'gone'; break } ; Write-Output ('iter ' + $$i + ': still there'); Start-Sleep -Seconds 4 }"`
     Pop $0
     Pop $1
-    IfFileExists "${dirPath}\*.*" 0 _crd_skip_${tag}
+
+    ; Trace: PS exit + output (truncated implicitly by FileWrite size)
+    FileOpen $9 "$TEMP\myclaw-uninst-trace.log" a
+    IfErrors _crd_trace_skip_ps_${tag}
+      FileSeek $9 0 END
+      FileWrite $9 "[${tag}] ps_exit=$0$\r$\n"
+      FileWrite $9 "[${tag}] ps_output: $1$\r$\n"
+      FileClose $9
+    _crd_trace_skip_ps_${tag}:
+    ClearErrors
+
+    IfFileExists "${dirPath}\*.*" 0 _crd_done_${tag}
       DetailPrint "Warning: ${dirPath} still has files after 8 retries — listing what's stuck:"
       nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Get-ChildItem -LiteralPath '${dirPath}' -Recurse -Force -ErrorAction SilentlyContinue | Select-Object -First 20 FullName | Format-Table -AutoSize | Out-String"`
       Pop $0
       Pop $1
       DetailPrint "$1"
-  _crd_skip_${tag}:
+
+      ; Trace: leftover files
+      FileOpen $9 "$TEMP\myclaw-uninst-trace.log" a
+      IfErrors _crd_trace_skip_leftover_${tag}
+        FileSeek $9 0 END
+        FileWrite $9 "[${tag}] LEFTOVER: $1$\r$\n"
+        FileClose $9
+      _crd_trace_skip_leftover_${tag}:
+      ClearErrors
+    Goto _crd_done_${tag}
+
+  _crd_absent_${tag}:
+    FileOpen $9 "$TEMP\myclaw-uninst-trace.log" a
+    IfErrors _crd_trace_skip_absent_${tag}
+      FileSeek $9 0 END
+      FileWrite $9 "[${tag}] absent (skipped)$\r$\n"
+      FileClose $9
+    _crd_trace_skip_absent_${tag}:
+    ClearErrors
+
+  _crd_done_${tag}:
 !macroend
 
 !macro customUnInstall
+  ; Trace: confirm we actually entered customUnInstall under silent mode.
+  ; Truncate the log on entry so leftover from prior runs doesn't confuse.
+  FileOpen $9 "$TEMP\myclaw-uninst-trace.log" w
+  IfErrors _cu_trace_skip_init
+    FileWrite $9 "[customUnInstall] enter; scope=$UninstallScope; silent=$\r$\n"
+    FileClose $9
+  _cu_trace_skip_init:
+  ClearErrors
+
   ; Remove auto-start registry entries (both HKLM and HKCU, in case either was set)
   DeleteRegValue HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Run" "MyClaw"
   DeleteRegValue HKCU "SOFTWARE\Microsoft\Windows\CurrentVersion\Run" "MyClaw"

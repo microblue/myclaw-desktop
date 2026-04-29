@@ -979,6 +979,40 @@ jobs:
             Get-Process | Where-Object { $_.ProcessName -match "myclaw|electron|node|openclaw" } |
               Select-Object Id, ProcessName, Path, StartTime |
               Format-Table -AutoSize | Out-String | Write-Host
+            Write-Host ""
+            Write-Host "=== NSIS uninstall trace log (myclaw-uninst-trace.log) ==="
+            # _CU_RemoveDir / customUnInstall write a per-step trace to
+            # %TEMP%.  In silent mode (/S) this is the ONLY way to see
+            # whether the NSIS macro actually executed and what
+            # PowerShell's retry loop reported back.  Search common
+            # temp roots since the elevated uninstaller may resolve
+            # $TEMP differently depending on UAC/profile.
+            $traceCandidates = @(
+              (Join-Path $env:TEMP "myclaw-uninst-trace.log"),
+              (Join-Path $env:LOCALAPPDATA "Temp\myclaw-uninst-trace.log"),
+              "C:\Windows\Temp\myclaw-uninst-trace.log",
+              "C:\Users\runneradmin\AppData\Local\Temp\myclaw-uninst-trace.log"
+            )
+            $found = $false
+            foreach ($t in $traceCandidates | Sort-Object -Unique) {
+              if (Test-Path $t) {
+                $found = $true
+                Write-Host "--- $t ---"
+                Get-Content -LiteralPath $t -ErrorAction SilentlyContinue
+                Write-Host ""
+              }
+            }
+            if (-not $found) {
+              Write-Host "(no trace log found — customUnInstall macro likely did not run, or NSIS \$TEMP resolved elsewhere)"
+              Write-Host ""
+              Write-Host "=== All myclaw-* files in known temp roots ==="
+              foreach ($root in @($env:TEMP, "C:\Windows\Temp", (Join-Path $env:LOCALAPPDATA "Temp"))) {
+                if (Test-Path $root) {
+                  Get-ChildItem -LiteralPath $root -Filter "myclaw-*" -ErrorAction SilentlyContinue |
+                    Format-Table FullName, Length | Out-String | Write-Host
+                }
+              }
+            }
             throw "REGRESSION: default silent uninstall left these behind:`n  $($bad -join "`n  ")"
           }
           Write-Host "OK: default silent uninstall wiped everything (full-clean default)"
