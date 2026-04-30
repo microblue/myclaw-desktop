@@ -18,7 +18,7 @@
  *
  * All of that lives in openclaw.  We just trigger it.
  */
-import { app, utilityProcess, type UtilityProcess } from 'electron';
+import { app, shell, utilityProcess, type UtilityProcess } from 'electron';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -28,6 +28,18 @@ import { getUvMirrorEnv } from './uv-env';
 
 const AUTH_FLOW_TIMEOUT_MS = 10 * 60 * 1000; // 10 min: browser flows are user-paced
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
+
+// openclaw's own openUrl() helper spawns explorer.exe / open / xdg-open via
+// child_process.spawn from inside our utilityProcess.  In practice that
+// silently fails on Windows + macOS for embedded GUI cases (openclaw swallows
+// the error and returns false — see browser-open-*.js).  But openclaw also
+// logs `Open: <url>` to stdout right after the attempt (see
+// provider-oauth-flow-*.js).  We snoop stdout for that line and re-open via
+// Electron's shell.openExternal from the main process, which always works.
+//
+// Worst case (openclaw's own attempt did succeed): the browser opens twice —
+// harmless, modern browsers de-dupe identical URL navigations.
+const AUTH_URL_REGEX = /Open(?:\s+this\s+URL\s+in\s+your\s+LOCAL\s+browser)?:\s*(https?:\/\/\S+)/i;
 
 export interface OpenClawAuthOptions {
   /** Openclaw provider id, e.g. "google-gemini-cli", "openai", "anthropic". */
@@ -213,6 +225,28 @@ async function runOpenClawCli(
     let stderrTruncated = false;
     let settled = false;
 
+    // Buffer partial lines so URL detection isn't broken by mid-line chunk
+    // boundaries.  Track URLs we've already opened to avoid double-opening
+    // when openclaw retries or reprints the same line.
+    let lineBuffer = '';
+    const opened = new Set<string>();
+    const scanForAuthUrl = (chunk: string) => {
+      lineBuffer += chunk;
+      const lines = lineBuffer.split(/\r?\n/);
+      lineBuffer = lines.pop() ?? '';
+      for (const line of lines) {
+        const match = line.match(AUTH_URL_REGEX);
+        if (!match) continue;
+        const url = match[1].replace(/[)\].,;'"]+$/, '');
+        if (opened.has(url)) continue;
+        opened.add(url);
+        logger.info(`[auth-runner] opening auth URL via shell.openExternal: ${url}`);
+        shell.openExternal(url).catch((err) => {
+          logger.error('[auth-runner] shell.openExternal failed', err);
+        });
+      }
+    };
+
     const finish = (result: Omit<OpenClawAuthResult, 'durationMs'>) => {
       if (settled) return;
       settled = true;
@@ -239,6 +273,7 @@ async function runOpenClawCli(
       const next = appendBounded(stdout, stdoutBytes, data, stdoutTruncated);
       stdout = next.output; stdoutBytes = next.bytes; stdoutTruncated = next.truncated;
       const text = data.toString();
+      scanForAuthUrl(text);
       onLog?.(text, 'stdout');
     });
 
@@ -246,6 +281,7 @@ async function runOpenClawCli(
       const next = appendBounded(stderr, stderrBytes, data, stderrTruncated);
       stderr = next.output; stderrBytes = next.bytes; stderrTruncated = next.truncated;
       const text = data.toString();
+      scanForAuthUrl(text);
       onLog?.(text, 'stderr');
     });
 
