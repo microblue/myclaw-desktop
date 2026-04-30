@@ -18,6 +18,16 @@ export interface DesktopRelease {
 
 const DESKTOP_RELEASES: DesktopRelease[] = [
     {
+        version: '1.7.2',
+        date: '2026-04-30',
+        changes: [
+            {
+                kind: 'fix',
+                text: 'Hotfix: Google / Apple OAuth login now works again. openclaw 2026.4.x added a hard "interactive TTY required" guard at the top of `models auth login` that fired before the OAuth flow could run, breaking sign-in for every browser-based provider. MyClaw now spawns openclaw through a small shim that spoofs the TTY check; the actual OAuth flow (openUrl + callback listener) needs no real TTY.'
+            }
+        ]
+    },
+    {
         version: '1.7.1',
         date: '2026-04-29',
         changes: [
