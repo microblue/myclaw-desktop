@@ -18,6 +18,28 @@ export interface DesktopRelease {
 
 const DESKTOP_RELEASES: DesktopRelease[] = [
     {
+        version: '1.7.1',
+        date: '2026-04-29',
+        changes: [
+            {
+                kind: 'highlight',
+                text: 'Uninstaller now offers a scope picker: full clean (default, removes all data), keep configuration, or keep everything. Default silent uninstall now actually wipes %APPDATA%\\myclaw-desktop on Windows — earlier builds left it behind, causing reinstalls to skip the first-launch wizard.'
+            },
+            {
+                kind: 'highlight',
+                text: 'First-launch runtime install now shows a determinate progress bar driven by package-extraction count and an honest 1–10 minute time estimate, so users can tell the install is making progress instead of staring at a sliding spinner.'
+            },
+            {
+                kind: 'highlight',
+                text: 'Bundled Node.js runtime is now shipped on Linux and macOS too (was Windows-only), so first-launch openclaw install no longer depends on a system-installed Node.'
+            },
+            {
+                kind: 'fix',
+                text: 'Bumped openclaw to 2026.4.26, picking up upstream\'s last four patch releases.'
+            }
+        ]
+    },
+    {
         version: '1.7.0',
         date: '2026-04-28',
         changes: [
