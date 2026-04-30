@@ -18,6 +18,16 @@ export interface DesktopRelease {
 
 const DESKTOP_RELEASES: DesktopRelease[] = [
     {
+        version: '1.7.3',
+        date: '2026-04-30',
+        changes: [
+            {
+                kind: 'fix',
+                text: 'Hotfix #2 for OAuth login: after 1.7.2 cleared the TTY guard, the flow still hung at "Getting auth code" because openclaw\'s own browser launcher (which spawns explorer.exe / open / xdg-open from inside Electron\'s utilityProcess) was failing silently and no browser window was opening. MyClaw now intercepts the auth URL from openclaw\'s stdout and opens it directly via Electron\'s shell.openExternal — works on Windows, macOS and Linux.'
+            }
+        ]
+    },
+    {
         version: '1.7.2',
         date: '2026-04-30',
         changes: [
