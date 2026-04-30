@@ -21,7 +21,8 @@
 import { app, utilityProcess, type UtilityProcess } from 'electron';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { getOpenClawDir, getOpenClawEntryPath } from './paths';
+import { pathToFileURL } from 'node:url';
+import { getOpenClawDir, getOpenClawEntryPath, getResourcesDir } from './paths';
 import { logger } from './logger';
 import { getUvMirrorEnv } from './uv-env';
 
@@ -151,6 +152,24 @@ async function runOpenClawCli(
     };
   }
 
+  // openclaw 2026.4.x's `models auth login` rejects non-interactive
+  // invocation with `Error: models auth login requires an interactive
+  // TTY.`  We fork via utilityProcess with stdio:'pipe', so isTTY is
+  // false and we always trip that guard before the OAuth flow runs.
+  // The actual provider OAuth flow (openUrl callback + localhost
+  // listener) does not need a real TTY — see resources/openclaw-tty-shim.mjs
+  // header for the full reasoning.  Spawn the shim, which spoofs
+  // isTTY=true on stdin/stdout/stderr and dynamic-imports openclaw.mjs.
+  const ttyShim = path.join(getResourcesDir(), 'openclaw-tty-shim.mjs');
+  const useShim = existsSync(ttyShim);
+  if (!useShim) {
+    logger.warn(
+      `[auth-runner] tty shim not found at ${ttyShim} — spawning openclaw.mjs directly; ` +
+      'auth login may fail with "requires an interactive TTY".',
+    );
+  }
+  const forkTarget = useShim ? ttyShim : entryScript;
+
   const binPath = getBundledBinPath();
   const binPathExists = existsSync(binPath);
   const finalPath = binPathExists
@@ -158,11 +177,14 @@ async function runOpenClawCli(
     : process.env.PATH || '';
   const uvEnv = await getUvMirrorEnv();
 
-  logger.info(`[auth-runner] Spawning ${command} in ${openclawDir}`);
+  logger.info(
+    `[auth-runner] Spawning ${command} in ${openclawDir}` +
+    (useShim ? ' (via tty shim)' : ''),
+  );
 
   return await new Promise<OpenClawAuthResult>((resolve) => {
     const abort = new AbortController();
-    const child = utilityProcess.fork(entryScript, args, {
+    const child = utilityProcess.fork(forkTarget, args, {
       cwd: openclawDir,
       stdio: 'pipe',
       env: {
@@ -171,6 +193,10 @@ async function runOpenClawCli(
         PATH: finalPath,
         OPENCLAW_NO_RESPAWN: '1',
         OPENCLAW_EMBEDDED_IN: 'MyClaw',
+        // Pass the real openclaw entry to the shim via env so the shim
+        // can dynamic-import it after spoofing TTY.  When the shim is
+        // not present (older runtime layout) this is harmless.
+        OPENCLAW_TTY_SHIM_TARGET: pathToFileURL(entryScript).href,
         // Disable interactive TTY prompts in subprocess: openclaw should
         // auto-fall through to its non-TTY OAuth path when launched here.
         FORCE_COLOR: '0',
