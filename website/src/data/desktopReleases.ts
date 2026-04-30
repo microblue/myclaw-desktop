@@ -18,12 +18,22 @@ export interface DesktopRelease {
 
 const DESKTOP_RELEASES: DesktopRelease[] = [
     {
+        version: '1.7.4',
+        date: '2026-04-30',
+        changes: [
+            {
+                kind: 'fix',
+                text: 'Hotfix #3 for OAuth login: 1.7.3 fixed the browser-launch problem for OpenAI Codex + Anthropic + most providers via stdout snooping, but Google Gemini OAuth uses a separate code path inside openclaw that does NOT print the auth URL when its own browser launcher silently fails — leaving the spinner stuck at "Requesting secure login code". MyClaw now monkey-patches child_process.spawn inside the openclaw subprocess so any explorer.exe / open / xdg-open / wslview launch announces the URL to stdout, where MyClaw\'s main process picks it up and opens the system browser via shell.openExternal. Covers Google, OpenAI, Apple and any future provider uniformly.'
+            }
+        ]
+    },
+    {
         version: '1.7.3',
         date: '2026-04-30',
         changes: [
             {
                 kind: 'fix',
-                text: 'Hotfix #2 for OAuth login: after 1.7.2 cleared the TTY guard, the flow still hung at "Getting auth code" because openclaw\'s own browser launcher (which spawns explorer.exe / open / xdg-open from inside Electron\'s utilityProcess) was failing silently and no browser window was opening. MyClaw now intercepts the auth URL from openclaw\'s stdout and opens it directly via Electron\'s shell.openExternal — works on Windows, macOS and Linux.'
+                text: 'Hotfix #2 for OAuth login: after 1.7.2 cleared the TTY guard, the flow still hung at "Getting auth code" because openclaw\'s own browser launcher (which spawns explorer.exe / open / xdg-open from inside Electron\'s utilityProcess) was failing silently and no browser window was opening. MyClaw now intercepts the auth URL from openclaw\'s stdout and opens it directly via Electron\'s shell.openExternal — works for OpenAI Codex and most providers.'
             }
         ]
     },
