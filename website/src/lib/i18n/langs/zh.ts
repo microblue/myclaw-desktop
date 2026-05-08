@@ -185,7 +185,7 @@ const zh: Translations = {
         statsWindows: 'Win',
         statsPlatformWindows: 'Windows',
         statsLinux: 'Linux',
-        statsPlatformLinux: '5 个安装包',
+        statsPlatformLinux: 'AppImage',
         ctaTitle: '下载 MyClaw.One 桌面版',
         ctaDescription:
             '免费下载。在您自己的设备上运行 OpenClaw — 支持 Windows 和 Linux。您的数据，您做主.',

@@ -184,7 +184,7 @@ const en = {
         statsWindows: 'Win',
         statsPlatformWindows: 'Windows',
         statsLinux: 'Linux',
-        statsPlatformLinux: '5 Packages',
+        statsPlatformLinux: 'AppImage',
         ctaTitle: 'Download MyClaw Desktop',
         ctaDescription:
             'Free to download. Run OpenClaw on your own machine — Windows and Linux supported. Your data, your rules.',

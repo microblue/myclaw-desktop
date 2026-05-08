@@ -12,10 +12,17 @@ const changelogHref = `${localePrefix}/changelog/`;
 // "What's new in v{version}" callout.  release-bump.mjs prepends
 // the new entry to desktopReleases.ts and updates DOWNLOAD_VERSION
 // in one shot, so these two stay in sync automatically.
-const DOWNLOAD_VERSION = '1.7.4';
+//
+// 2026-05-08: switched from the legacy microblue/myclaw-desktop-releases
+// repo (last shipped 1.7.4) over to microblue/myclaw-desk, which is the
+// new Electron client that bundles openclaw + studio for offline-ready
+// install. Asset naming is `myclaw-desk-<version>-setup.exe` and
+// `myclaw-desk-<version>.AppImage` per electron-builder.yml in that repo.
+const DOWNLOAD_VERSION = '0.1.27';
 const LATEST = DESKTOP_RELEASES[0];
 const latestHighlights = LATEST.changes.filter(c => c.kind === 'highlight').slice(0, 3);
-const RELEASES_BASE = `https://github.com/microblue/myclaw-desktop-releases/releases/download/v${DOWNLOAD_VERSION}`;
+const RELEASES_REPO = 'microblue/myclaw-desk';
+const RELEASES_BASE = `https://github.com/${RELEASES_REPO}/releases/download/v${DOWNLOAD_VERSION}`;
 
 const features = [
     { icon: 'clock',                title: t('landing.zeroConfig'),         description: t('go.zeroConfigDescription') },
@@ -49,13 +56,13 @@ const faqs = [
     { question: t('go.faq6Question'), answer: t('go.faq6Answer') },
 ];
 
+// myclaw-desk currently ships Win .exe + Linux AppImage only. The legacy
+// 1.7.x line had deb/rpm + arm64 builds; the new electron-builder.yml
+// targets just NSIS + AppImage. Once arm64 / .deb / .rpm get re-added
+// in CI, append entries here.
 const downloads = [
-    { platform: 'Windows',      sublabel: 'x64 · .exe Installer',      url: `${RELEASES_BASE}/MyClaw.One-${DOWNLOAD_VERSION}-win-x64.exe`,            featured: true },
-    { platform: 'Linux',        sublabel: 'x64 · AppImage',            url: `${RELEASES_BASE}/MyClaw.One-${DOWNLOAD_VERSION}-linux-x86_64.AppImage` },
-    { platform: 'Linux',        sublabel: 'x64 · Debian / Ubuntu',     url: `${RELEASES_BASE}/MyClaw.One-${DOWNLOAD_VERSION}-linux-amd64.deb` },
-    { platform: 'Linux',        sublabel: 'x64 · RPM',                 url: `${RELEASES_BASE}/MyClaw.One-${DOWNLOAD_VERSION}-linux-x86_64.rpm` },
-    { platform: 'Linux ARM64',  sublabel: 'arm64 · AppImage',          url: `${RELEASES_BASE}/MyClaw.One-${DOWNLOAD_VERSION}-linux-arm64.AppImage` },
-    { platform: 'Linux ARM64',  sublabel: 'arm64 · Debian / Ubuntu',   url: `${RELEASES_BASE}/MyClaw.One-${DOWNLOAD_VERSION}-linux-arm64.deb` },
+    { platform: 'Windows', sublabel: 'x64 · .exe Installer', url: `${RELEASES_BASE}/myclaw-desk-${DOWNLOAD_VERSION}-setup.exe`, featured: true },
+    { platform: 'Linux',   sublabel: 'x64 · AppImage',       url: `${RELEASES_BASE}/myclaw-desk-${DOWNLOAD_VERSION}.AppImage` },
 ];
 
 const stats = [
@@ -158,7 +165,7 @@ const currentVersionText = t('go.currentVersion', { version: DOWNLOAD_VERSION })
                             {lang === 'zh' ? '更新日志' : "What's new"}
                         </a>{' '}
                         ·{' '}
-                        <a href="https://github.com/microblue/myclaw-desktop-releases/releases" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 transition-colors hover:text-foreground">
+                        <a href={`https://github.com/${RELEASES_REPO}/releases`} target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 transition-colors hover:text-foreground">
                             {t('go.allReleases')}
                         </a>
                     </p>

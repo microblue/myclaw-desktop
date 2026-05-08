@@ -1,7 +1,8 @@
-// Changelog for the MyClaw.One desktop app, auto-distilled from commit
-// history between tags in microblue/myclaw-desktop. Each bump here should
-// match a published release at
-// https://github.com/microblue/myclaw-desktop-releases/releases.
+// Changelog for the MyClaw.One desktop app. The 0.1.x line (May 2026 →)
+// is the new build at https://github.com/microblue/myclaw-desk/releases.
+// The 1.x entries below are the legacy product line at
+// https://github.com/microblue/myclaw-desktop-releases/releases — kept
+// here as historical context.
 
 export type DesktopChangeKind = 'highlight' | 'fix'
 
@@ -17,6 +18,40 @@ export interface DesktopRelease {
 }
 
 const DESKTOP_RELEASES: DesktopRelease[] = [
+    {
+        version: '0.1.27',
+        date: '2026-05-08',
+        changes: [
+            {
+                kind: 'highlight',
+                text: 'New build line. Ships openclaw + Studio pre-installed inside the installer, so first launch no longer waits on `npm install` to finish — the splash goes from "Installing…" to a working chat in seconds rather than 10+ minutes.',
+            },
+            {
+                kind: 'highlight',
+                text: 'Faster Windows install. Total file count cut from ~36k to ~21k (-42%) and installer size from 246 MB to 191 MB (-22%) by switching the embedded Studio to Next.js standalone output, dropping the bundled npm + Node headers we no longer need at runtime, and broader pruning of build-time artifacts. Translates directly to less time waiting on Windows Defender to scan every file the installer writes.',
+            },
+            {
+                kind: 'highlight',
+                text: 'Auto-update via electron-updater + delta blockmaps. From 0.1.22 onward, future releases arrive as ~tens-of-MB delta downloads instead of the full installer.',
+            },
+            {
+                kind: 'highlight',
+                text: 'OpenRouter provider key bundled with the installer — chat works out of the box without you pasting a key. Default model pinned to anthropic/claude-haiku-4.5 via OpenRouter.',
+            },
+            {
+                kind: 'fix',
+                text: 'Studio now waits for the gateway\'s WebSocket handler to actually be ready before connecting, instead of racing it on TCP-up. Fixes the "ws closed before connect: connect failed" log line that appeared on first launch when the gateway took 10–15 seconds to finish plugin init after binding its port.',
+            },
+            {
+                kind: 'fix',
+                text: 'Studio gateway auth token is now seeded into ~/.openclaw/openclaw.json on first launch, so Studio finds the token it needs to talk to the local gateway. Previously surfaced as "no access token for openclaw connection".',
+            },
+            {
+                kind: 'highlight',
+                text: 'Version label is now visible: shown next to the brand on the splash and in the OS window title after the swap to Studio.',
+            },
+        ],
+    },
     {
         version: '1.7.4',
         date: '2026-04-30',
